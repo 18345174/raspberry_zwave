@@ -54,6 +54,7 @@
 
 ## 部署脚本
 
+- `deploy/scripts/one-click-deploy-rpi.sh`：树莓派 Ubuntu 一键部署；默认登录密码 `123456`
 - `deploy/scripts/prepare-ubuntu.sh`：安装 Ubuntu 依赖与 Node.js LTS
 - `deploy/scripts/bootstrap-env.sh`：从样例生成 `backend/.env`
 - `deploy/scripts/install.sh`：同步代码、安装依赖、构建并注册 systemd

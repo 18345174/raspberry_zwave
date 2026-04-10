@@ -7,6 +7,8 @@ LOG_DIR=${LOG_DIR:-/var/log/zwave-test-platform}
 SERVICE_NAME=zwave-test-platform.service
 APP_USER=${APP_USER:-ubuntu}
 APP_GROUP=${APP_GROUP:-$APP_USER}
+UNIT_TMP=$(mktemp)
+trap 'rm -f "$UNIT_TMP"' EXIT
 
 sudo mkdir -p "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
 sudo rsync -a --delete \
@@ -20,7 +22,13 @@ npm install
 npm run build
 
 sudo chown -R "$APP_USER:$APP_GROUP" "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
-sudo install -m 0644 deploy/systemd/$SERVICE_NAME /etc/systemd/system/$SERVICE_NAME
+sed \
+  -e "s#^User=.*#User=$APP_USER#" \
+  -e "s#^Group=.*#Group=$APP_GROUP#" \
+  -e "s#^WorkingDirectory=.*#WorkingDirectory=$APP_DIR#" \
+  -e "s#^EnvironmentFile=.*#EnvironmentFile=$APP_DIR/backend/.env#" \
+  deploy/systemd/$SERVICE_NAME > "$UNIT_TMP"
+sudo install -m 0644 "$UNIT_TMP" /etc/systemd/system/$SERVICE_NAME
 sudo systemctl daemon-reload
 sudo systemctl enable --now $SERVICE_NAME
 sudo systemctl status $SERVICE_NAME --no-pager
