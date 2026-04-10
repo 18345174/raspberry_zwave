@@ -1,0 +1,20 @@
+[Unit]
+Description=Raspberry Pi Z-Wave Test Platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/zwave-test-platform
+EnvironmentFile=/opt/zwave-test-platform/backend/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm --workspace backend run start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
