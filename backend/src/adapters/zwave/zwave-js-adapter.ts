@@ -263,6 +263,12 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (this.isExpectedHardResetTeardownError(error)) {
+        this.log("warn", "[controller] Hard reset is tearing down the old controller instance", {
+          error: message,
+        });
+        return;
+      }
       this.log("error", "[controller] Hard reset failed", {
         error: message,
       });
@@ -756,6 +762,15 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private updateStatus(partial: Partial<DriverStatus>): void {
     Object.assign(this.status, partial, { updatedAt: nowIso() });
     this.publish({ type: "zwave.status.changed", payload: { ...this.status } });
+  }
+
+  private isExpectedHardResetTeardownError(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+      return false;
+    }
+    const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+    const message = error instanceof Error ? error.message : String(error);
+    return code === "Driver_TaskRemoved" || message.includes("controller instance is being destroyed");
   }
 
   private publishNodeUpdated(node: any): void {
