@@ -142,6 +142,8 @@ pre,
   padding: 20px 28px 28px;
   display: grid;
   gap: 14px;
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .page-header,
@@ -165,6 +167,8 @@ pre,
 .page-header {
   padding: 6px 14px;
   min-height: 0;
+  display: flex;
+  align-items: center;
 }
 
 .page-header h2 {
@@ -518,6 +522,47 @@ pre,
 
 .value-table-wrap {
   overflow: auto;
+}
+
+.device-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.device-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.device-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(245, 240, 255, 0.98);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.device-table th,
+.device-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(92, 57, 181, 0.1);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.device-table tbody tr:hover {
+  background: rgba(238, 229, 255, 0.48);
+}
+
+.device-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .value-table {

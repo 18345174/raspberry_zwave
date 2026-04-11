@@ -15,14 +15,29 @@ const platform = usePlatformStore();
         <button class="ghost-button" @click="platform.refreshNodes">刷新</button>
       </div>
 
-      <div class="list-column">
-        <article v-for="node in platform.nodes" :key="node.nodeId" class="list-card">
-          <div>
-            <strong>#{{ node.nodeId }} {{ node.product || node.name || '未命名节点' }}</strong>
-            <p>{{ node.manufacturer || '未知厂商' }}</p>
-          </div>
-          <span>{{ node.status || node.interviewStage || '未知状态' }}</span>
-        </article>
+      <div class="device-table-wrap">
+        <table class="device-table">
+          <thead>
+            <tr>
+              <th>节点 ID</th>
+              <th>名称</th>
+              <th>制造商</th>
+              <th>产品</th>
+              <th>安全</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody v-if="platform.nodes.length > 0">
+            <tr v-for="node in platform.nodes" :key="node.nodeId">
+              <td>#{{ node.nodeId }}</td>
+              <td>{{ node.name || '-' }}</td>
+              <td>{{ node.manufacturer || '-' }}</td>
+              <td>{{ node.product || '-' }}</td>
+              <td>{{ node.isSecure ? '安全' : '非安全' }}</td>
+              <td>{{ node.status || node.interviewStage || '未知状态' }}</td>
+            </tr>
+          </tbody>
+        </table>
         <p v-if="platform.nodes.length === 0" class="empty-state">当前没有设备，点击右上角“刷新”重新获取列表。</p>
       </div>
     </section>
