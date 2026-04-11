@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { reactive } from "vue";
+import { computed, reactive } from "vue";
 
+import StatusPill from "../components/StatusPill.vue";
 import { usePlatformStore } from "../stores/platform";
 import { translateBooleanState, translateChallengeType } from "../utils/ui-text";
 
@@ -12,6 +13,21 @@ const form = reactive({
 });
 
 const securityOptions = ["S2_AccessControl", "S2_Authenticated", "S2_Unauthenticated", "S0_Legacy"];
+const flowLabel = computed(() => {
+  if (platform.status.isInclusionActive) {
+    return "添加中";
+  }
+  if (platform.status.isExclusionActive) {
+    return "删除中";
+  }
+  return "待机";
+});
+const flowTone = computed<"good" | "warn">(() => {
+  if (platform.status.isInclusionActive || platform.status.isExclusionActive) {
+    return "warn";
+  }
+  return "good";
+});
 
 async function submitChallenge(): Promise<void> {
   const challenge = platform.inclusionChallenge;
@@ -36,13 +52,14 @@ async function submitChallenge(): Promise<void> {
 </script>
 
 <template>
-  <div class="page-grid">
-    <section class="page-card">
+  <div class="page-grid page-grid-single">
+    <section class="page-card accent-card">
       <div class="section-heading">
         <div>
           <p class="section-kicker">安全引导</p>
           <h3>添加 / 删除设备</h3>
         </div>
+        <StatusPill :label="flowLabel" :tone="flowTone" />
       </div>
 
       <div class="button-row">
@@ -62,10 +79,8 @@ async function submitChallenge(): Promise<void> {
           <dd>{{ translateBooleanState(platform.status.isExclusionActive) }}</dd>
         </div>
       </dl>
-    </section>
 
-    <section class="page-card accent-card">
-      <div class="section-heading">
+      <div class="section-heading stacked-section-heading">
         <div>
           <p class="section-kicker">挑战桥接</p>
           <h3>安全授权与 DSK 交互</h3>

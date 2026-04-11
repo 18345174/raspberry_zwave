@@ -254,6 +254,10 @@ pre,
   margin-top: 24px;
 }
 
+.stacked-section-heading {
+  margin-top: 24px;
+}
+
 .primary-button,
 .ghost-button {
   border: 0;
