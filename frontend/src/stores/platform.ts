@@ -39,7 +39,6 @@ export const usePlatformStore = defineStore("platform", () => {
   const runs = ref<TestRunRecord[]>([]);
   const runLogs = ref<Record<string, TestLogRecord[]>>({});
   const configItems = ref<Array<{ key: string; value: unknown }>>([]);
-  const notifications = ref<Array<{ id: string; title: string; body: string }>>([]);
   const inclusionChallenge = ref<Record<string, unknown> | null>(null);
   const selectedPortPath = ref<string>("");
   const wsState = ref<"idle" | "connecting" | "open" | "closed">("idle");
@@ -49,6 +48,10 @@ export const usePlatformStore = defineStore("platform", () => {
 
   function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  function showBrowserNotice(title: string, body: string): void {
+    window.alert(`${title}\n\n${body}`);
   }
 
   async function bootstrap(): Promise<void> {
@@ -96,7 +99,7 @@ export const usePlatformStore = defineStore("platform", () => {
       connectWebSocket(true);
     } catch (error) {
       errorMessage.value = getErrorMessage(error);
-      pushNotification("初始化失败", errorMessage.value);
+      showBrowserNotice("初始化失败", errorMessage.value);
     }
   }
 
@@ -201,15 +204,6 @@ export const usePlatformStore = defineStore("platform", () => {
     statusPollTimer = null;
   }
 
-  function pushNotification(title: string, body: string): void {
-    notifications.value.unshift({
-      id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      title,
-      body,
-    });
-    notifications.value = notifications.value.slice(0, 8);
-  }
-
   function handleEvent(event: AppEvent): void {
     if (event.type === "system.health") {
       health.value = event.payload as SystemHealth;
@@ -223,13 +217,16 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.inclusion.challenge") {
       inclusionChallenge.value = event.payload as Record<string, unknown>;
-      pushNotification("入网挑战", translateChallengeType(String((event.payload as { challengeType?: string }).challengeType ?? "未知")));
+      showBrowserNotice(
+        "入网挑战",
+        translateChallengeType(String((event.payload as { challengeType?: string }).challengeType ?? "未知")),
+      );
       return;
     }
 
     if (event.type === "zwave.inclusion.challenge.aborted") {
       inclusionChallenge.value = null;
-      pushNotification("入网流程", "安全授权流程已中止");
+      showBrowserNotice("入网流程", "安全授权流程已中止");
       return;
     }
 
@@ -369,7 +366,7 @@ export const usePlatformStore = defineStore("platform", () => {
       await handler();
     } catch (error) {
       errorMessage.value = getErrorMessage(error);
-      pushNotification(title, errorMessage.value);
+      showBrowserNotice(title, errorMessage.value);
     }
   }
 
@@ -386,7 +383,6 @@ export const usePlatformStore = defineStore("platform", () => {
     runs,
     runLogs,
     configItems,
-    notifications,
     inclusionChallenge,
     selectedPortPath,
     wsState,

@@ -147,7 +147,6 @@ pre,
 .page-header,
 .summary-strip,
 .content-panel,
-.notification-card,
 .page-card,
 .metric-card {
   border: 1px solid var(--line);
@@ -388,23 +387,6 @@ pre,
 .status-pill[data-tone="bad"] {
   background: rgba(165, 58, 44, 0.16);
   color: var(--bad);
-}
-
-.notification-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-
-.notification-card {
-  border-radius: 18px;
-  padding: 14px 16px;
-  background: rgba(251, 247, 255, 0.88);
-}
-
-.notification-card p {
-  margin: 0 0 6px;
-  font-weight: 700;
 }
 
 .text-input {

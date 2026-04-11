@@ -20,6 +20,7 @@ async function submit(): Promise<void> {
     await router.push("/controller");
   } catch (error) {
     form.error = error instanceof Error ? error.message : String(error);
+    window.alert(`登录失败\n\n${form.error}`);
   }
 }
 </script>
@@ -42,8 +43,6 @@ async function submit(): Promise<void> {
       <div class="button-row">
         <button class="primary-button" :disabled="!platform.authSession.supportsPasswordLogin" @click="submit">登录</button>
       </div>
-
-      <p v-if="form.error" class="error-text">{{ form.error }}</p>
     </section>
   </section>
 </template>

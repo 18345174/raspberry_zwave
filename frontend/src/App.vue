@@ -83,17 +83,7 @@ function syncRouteWithAuth(): void {
       </section>
 
       <section class="content-panel">
-        <p v-if="platform.errorMessage" class="error-text">
-          {{ platform.errorMessage }}
-        </p>
         <RouterView />
-      </section>
-
-      <section class="notification-strip">
-        <article v-for="item in platform.notifications" :key="item.id" class="notification-card">
-          <p>{{ item.title }}</p>
-          <span>{{ item.body }}</span>
-        </article>
       </section>
     </main>
   </div>
