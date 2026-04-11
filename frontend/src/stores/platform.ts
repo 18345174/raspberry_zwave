@@ -2,7 +2,6 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
-import { translateChallengeType } from "../utils/ui-text";
 import type {
   AppEvent,
   AuthSessionView,
@@ -40,6 +39,8 @@ export const usePlatformStore = defineStore("platform", () => {
   const runLogs = ref<Record<string, TestLogRecord[]>>({});
   const configItems = ref<Array<{ key: string; value: unknown }>>([]);
   const inclusionChallenge = ref<Record<string, unknown> | null>(null);
+  const latestIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
+  const latestExcludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
   const selectedPortPath = ref<string>("");
   const wsState = ref<"idle" | "connecting" | "open" | "closed">("idle");
   const errorMessage = ref("");
@@ -52,6 +53,12 @@ export const usePlatformStore = defineStore("platform", () => {
 
   function showBrowserNotice(title: string, body: string): void {
     window.alert(`${title}\n\n${body}`);
+  }
+
+  function resetProvisioningFlow(): void {
+    inclusionChallenge.value = null;
+    latestIncludedNode.value = null;
+    latestExcludedNode.value = null;
   }
 
   async function bootstrap(): Promise<void> {
@@ -217,20 +224,37 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.inclusion.challenge") {
       inclusionChallenge.value = event.payload as Record<string, unknown>;
-      showBrowserNotice(
-        "入网挑战",
-        translateChallengeType(String((event.payload as { challengeType?: string }).challengeType ?? "未知")),
-      );
       return;
     }
 
     if (event.type === "zwave.inclusion.challenge.aborted") {
       inclusionChallenge.value = null;
-      showBrowserNotice("入网流程", "安全授权流程已中止");
       return;
     }
 
-    if (event.type === "zwave.node.added" || event.type === "zwave.node.updated" || event.type === "zwave.node.removed") {
+    if (event.type === "zwave.node.added") {
+      const payload = event.payload as { node?: NodeDetail };
+      latestIncludedNode.value = {
+        nodeId: payload.node?.nodeId ?? 0,
+        name: payload.node?.name ?? payload.node?.product,
+        timestamp: event.timestamp,
+      };
+      inclusionChallenge.value = null;
+      void refreshNodes();
+      return;
+    }
+
+    if (event.type === "zwave.node.removed") {
+      const payload = event.payload as { nodeId?: number };
+      latestExcludedNode.value = {
+        nodeId: payload.nodeId ?? 0,
+        timestamp: event.timestamp,
+      };
+      void refreshNodes();
+      return;
+    }
+
+    if (event.type === "zwave.node.updated") {
       void refreshNodes();
       return;
     }
@@ -307,6 +331,7 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function startInclusion(): Promise<void> {
+    resetProvisioningFlow();
     await runAction("启动入网失败", async () => {
       await apiClient.startInclusion();
     });
@@ -319,6 +344,7 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function startExclusion(): Promise<void> {
+    resetProvisioningFlow();
     await runAction("启动排除失败", async () => {
       await apiClient.startExclusion();
     });
@@ -384,6 +410,8 @@ export const usePlatformStore = defineStore("platform", () => {
     runLogs,
     configItems,
     inclusionChallenge,
+    latestIncludedNode,
+    latestExcludedNode,
     selectedPortPath,
     wsState,
     errorMessage,
@@ -407,6 +435,7 @@ export const usePlatformStore = defineStore("platform", () => {
     stopExclusion,
     submitGrantSecurity,
     submitValidateDsk,
+    resetProvisioningFlow,
     runTest,
     cancelRun,
     pingNode,
