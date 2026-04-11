@@ -48,6 +48,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   private modulePromise?: Promise<ZwaveModule>;
   private driver?: any;
+  private controllerEventsAttached = false;
 
   public constructor(private readonly appConfig: AppConfig) {}
 
@@ -79,6 +80,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const driver = new zwave.Driver(portPath, this.createDriverOptions());
 
     this.driver = driver;
+    this.controllerEventsAttached = false;
     this.updateStatus({
       phase: "connecting",
       selectedPortPath: portPath,
@@ -358,6 +360,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("driver ready", () => {
+      this.attachControllerEvents(driver);
       this.log("info", "Controller reported ready", {
         controllerId: driver.controller?.ownNodeId,
         homeId: driver.controller?.homeId != undefined ? `0x${driver.controller.homeId.toString(16)}` : undefined,
@@ -422,17 +425,26 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       });
     });
 
-    driver.controller.on?.("inclusion stopped", () => {
+    void zwave;
+  }
+
+  private attachControllerEvents(driver: any): void {
+    if (this.controllerEventsAttached) {
+      return;
+    }
+
+    const controller = driver.controller;
+    controller.on?.("inclusion stopped", () => {
       this.updateStatus({ isInclusionActive: false });
       this.publish({ type: "zwave.inclusion.stopped", payload: {} });
     });
 
-    driver.controller.on?.("exclusion stopped", () => {
+    controller.on?.("exclusion stopped", () => {
       this.updateStatus({ isExclusionActive: false });
       this.publish({ type: "zwave.exclusion.stopped", payload: {} });
     });
 
-    void zwave;
+    this.controllerEventsAttached = true;
   }
 
   private buildValueId(valueId: ValueIdInput): ValueIdInput {
@@ -564,6 +576,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
     const current = this.driver;
     this.driver = undefined;
+    this.controllerEventsAttached = false;
     this.pendingInclusionRequests.clear();
     await current.destroy();
   }

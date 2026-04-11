@@ -6,9 +6,10 @@ MODE=${1:-backend}
 TAIL_LINES=${TAIL_LINES:-120}
 
 JOURNAL_ARGS=(-u "$SERVICE_NAME" -n "$TAIL_LINES" -f -o short-iso --no-hostname)
+JOURNAL_CHECK_ARGS=(-u "$SERVICE_NAME" -n 1 --no-pager)
 
 run_journal() {
-  if journalctl "${JOURNAL_ARGS[@]}" >/dev/null 2>&1 </dev/null; then
+  if journalctl "${JOURNAL_CHECK_ARGS[@]}" >/dev/null 2>&1 </dev/null; then
     journalctl "${JOURNAL_ARGS[@]}"
     return
   fi

@@ -77,4 +77,5 @@
 - 实时查看筛选后的 Z-Wave 相关日志：`bash deploy/scripts/tail-logs.sh zwave`
 - 仅查看错误相关日志：`bash deploy/scripts/tail-logs.sh errors`
 - 实时查看全部服务日志：`bash deploy/scripts/tail-logs.sh all`
+- 这些都是直接跟随 `journalctl -f` 的实时输出，不是写入单独日志文件
 - 如当前用户没有 journal 权限，脚本会自动尝试走 `sudo journalctl`
