@@ -20,6 +20,7 @@ const navItems = [
 ];
 
 const isLoginRoute = computed(() => route.path === "/login");
+const currentPageTitle = computed(() => navItems.find((item) => item.to === route.path)?.label ?? "控制台");
 
 const statusTone = computed(() => {
   switch (platform.status.phase) {
@@ -91,19 +92,14 @@ function syncRouteWithAuth(): void {
     </aside>
 
     <main class="shell-main">
-      <section class="hero-panel">
-        <div>
-          <p class="hero-kicker">工厂级测试台面</p>
-          <h2>树莓派上的 Z-Wave 测试控制台</h2>
-          <p class="hero-copy">
-            以单实例 Driver、单任务测试引擎和稳定串口路径为基础，符合架构文档约束。
-          </p>
-        </div>
-        <div class="hero-metrics">
-          <MetricCard eyebrow="驱动" title="运行状态" :value="translateDriverPhase(platform.status.phase)" :note="platform.status.connectedPortPath || '未连接串口'" />
-          <MetricCard eyebrow="清单" title="节点数量" :value="String(platform.nodes.length)" note="来自服务端节点快照" />
-          <MetricCard eyebrow="执行器" title="最近任务" :value="translateRunStatus(platform.latestRun?.status || 'idle')" :note="platform.latestRun?.id || '暂无测试记录'" />
-        </div>
+      <section class="page-header">
+        <h2>{{ currentPageTitle }}</h2>
+      </section>
+
+      <section class="summary-strip">
+        <MetricCard compact eyebrow="驱动" title="运行状态" :value="translateDriverPhase(platform.status.phase)" :note="platform.status.connectedPortPath || '未连接串口'" />
+        <MetricCard compact eyebrow="清单" title="节点数量" :value="String(platform.nodes.length)" note="来自服务端节点快照" />
+        <MetricCard compact eyebrow="执行器" title="最近任务" :value="translateRunStatus(platform.latestRun?.status || 'idle')" :note="platform.latestRun?.id || '暂无测试记录'" />
       </section>
 
       <section class="content-panel">
