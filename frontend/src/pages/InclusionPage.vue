@@ -6,10 +6,11 @@ import { usePlatformStore } from "../stores/platform";
 import { translateBooleanState, translateChallengeType, translateDriverPhase } from "../utils/ui-text";
 
 type FlowMode = "idle" | "include" | "exclude";
-type DialogStep = "search" | "grant" | "dsk" | "include-success" | "exclude-success" | "stopped";
+type DialogStep = "search" | "grant" | "dsk" | "processing" | "include-success" | "exclude-success" | "stopped";
 
 const platform = usePlatformStore();
 const dialogMode = ref<FlowMode>("idle");
+const includeUiStage = ref<"search" | "grant" | "dsk" | "processing">("search");
 const form = reactive({
   pin: "",
   grant: [] as string[],
@@ -64,6 +65,9 @@ const dialogStep = computed<DialogStep>(() => {
     if (platform.status.isInclusionActive) {
       return "search";
     }
+    if (includeUiStage.value === "processing" || includeUiStage.value === "grant" || includeUiStage.value === "dsk") {
+      return "processing";
+    }
     return "stopped";
   }
 
@@ -87,6 +91,8 @@ const dialogTitle = computed(() => {
         return "确认安全等级";
       case "dsk":
         return "输入 DSK 前 5 位";
+      case "processing":
+        return "正在添加设备";
       case "include-success":
         return "设备已发现";
       case "stopped":
@@ -119,7 +125,22 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => platform.inclusionChallenge?.challengeType,
+  (value) => {
+    if (value === "grant_security_classes") {
+      includeUiStage.value = "grant";
+      return;
+    }
+    if (value === "validate_dsk") {
+      includeUiStage.value = "dsk";
+    }
+  },
+  { immediate: true },
+);
+
 async function beginInclusion(): Promise<void> {
+  includeUiStage.value = "search";
   await platform.startInclusion();
   if (platform.status.isInclusionActive) {
     dialogMode.value = "include";
@@ -140,6 +161,7 @@ async function submitChallenge(): Promise<void> {
   }
 
   if (challenge.challengeType === "grant_security_classes") {
+    includeUiStage.value = "processing";
     await platform.submitGrantSecurity({
       requestId: String(challenge.requestId),
       grant: form.grant,
@@ -148,6 +170,7 @@ async function submitChallenge(): Promise<void> {
     return;
   }
 
+  includeUiStage.value = "processing";
   await platform.submitValidateDsk({
     requestId: String(challenge.requestId),
     pin: form.pin,
@@ -166,6 +189,7 @@ async function stopActiveFlow(): Promise<void> {
 
 function closeDialog(): void {
   dialogMode.value = "idle";
+  includeUiStage.value = "search";
   form.pin = "";
   form.grant = [];
   form.clientSideAuth = false;
@@ -316,6 +340,14 @@ function closeDialog(): void {
 
           <div class="button-row">
             <button class="primary-button" :disabled="form.pin.length !== 5" @click="submitChallenge">继续添加</button>
+          </div>
+        </template>
+
+        <template v-else-if="dialogStep === 'processing'">
+          <div class="flow-state">
+            <div class="flow-spinner" />
+            <p class="flow-lead">安全信息已提交，正在继续完成设备添加。</p>
+            <p class="flow-copy">控制器正在和设备完成 S2 引导、密钥交换和后续握手。这个阶段可能持续几十秒，请不要关闭页面，也不要再次触发设备配网。</p>
           </div>
         </template>
 
