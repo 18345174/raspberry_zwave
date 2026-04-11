@@ -61,6 +61,7 @@ export interface NodeSummary {
   firmwareVersion?: string;
   status?: string;
   interviewStage?: string;
+  ready?: boolean;
   securityClasses: string[];
   isSecure: boolean;
   isListening: boolean;

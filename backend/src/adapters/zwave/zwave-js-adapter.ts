@@ -470,6 +470,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         interviewStage: node.interviewStage != undefined ? String(node.interviewStage) : undefined,
         status: node.status != undefined ? String(node.status) : undefined,
       });
+      this.publish({ type: "zwave.node.ready", payload: this.toNodeDetail(node) });
       this.publish({ type: "zwave.node.updated", payload: this.toNodeDetail(node) });
     });
 
@@ -536,6 +537,17 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       this.publish({ type: "zwave.inclusion.stopped", payload: {} });
     });
 
+    controller.on?.("node found", (payload: any) => {
+      const nodeId =
+        payload?.node?.id ??
+        payload?.node?.nodeId ??
+        payload?.nodeId;
+      this.log("info", "[include] Controller found candidate node", {
+        nodeId,
+      });
+      this.publish({ type: "zwave.node.found", payload: { nodeId } });
+    });
+
     controller.on?.("exclusion stopped", () => {
       this.updateStatus({ isExclusionActive: false });
       this.inclusionChallenge = null;
@@ -578,6 +590,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       firmwareVersion: node.firmwareVersion,
       status: node.status != undefined ? String(node.status) : undefined,
       interviewStage: node.interviewStage != undefined ? String(node.interviewStage) : undefined,
+      ready: Boolean(node.ready),
       securityClasses,
       isSecure: Boolean(node.isSecure),
       isListening: Boolean(node.isListening),

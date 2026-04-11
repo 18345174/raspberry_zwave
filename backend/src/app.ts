@@ -65,6 +65,9 @@ export async function createApp(config: AppConfig) {
 
   adapter.onEvent((event) => {
     void nodeRegistry.handleEvent(event);
+    if (event.type === "zwave.inclusion.stopped" || event.type === "zwave.exclusion.stopped") {
+      void nodeRegistry.syncAll();
+    }
     eventBus.publish(event);
   });
 

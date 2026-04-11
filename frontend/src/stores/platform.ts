@@ -24,6 +24,8 @@ const emptyStatus = (): DriverStatus => ({
   updatedAt: new Date().toISOString(),
 });
 
+const PROVISIONING_SETTLE_POLLS = 20;
+
 export const usePlatformStore = defineStore("platform", () => {
   const authSession = ref<AuthSessionView>({
     isAuthenticationEnabled: false,
@@ -41,11 +43,16 @@ export const usePlatformStore = defineStore("platform", () => {
   const configItems = ref<Array<{ key: string; value: unknown }>>([]);
   const inclusionChallenge = ref<InclusionChallenge | null>(null);
   const provisioningMode = ref<"idle" | "include" | "exclude">("idle");
+  const provisioningResult = ref<"idle" | "running" | "joined" | "success" | "stopped">("idle");
+  const foundIncludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
+  const pendingIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestExcludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
   const selectedPortPath = ref<string>("");
   const wsState = ref<"idle" | "connecting" | "open" | "closed">("idle");
   const errorMessage = ref("");
+  const provisioningBaselineNodeIds = ref<number[]>([]);
+  const provisioningSettlePollsRemaining = ref(0);
   let socket: WebSocket | null = null;
   let statusPollTimer: number | null = null;
 
@@ -60,8 +67,131 @@ export const usePlatformStore = defineStore("platform", () => {
   function resetProvisioningFlow(): void {
     inclusionChallenge.value = null;
     provisioningMode.value = "idle";
+    provisioningResult.value = "idle";
+    foundIncludedNode.value = null;
+    pendingIncludedNode.value = null;
     latestIncludedNode.value = null;
     latestExcludedNode.value = null;
+    provisioningBaselineNodeIds.value = [];
+    provisioningSettlePollsRemaining.value = 0;
+  }
+
+  function captureProvisioningBaseline(): void {
+    provisioningBaselineNodeIds.value = nodes.value.map((item) => item.nodeId);
+  }
+
+  function startProvisioning(mode: "include" | "exclude"): void {
+    resetProvisioningFlow();
+    captureProvisioningBaseline();
+    provisioningMode.value = mode;
+    provisioningResult.value = "running";
+    provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
+  }
+
+  function markIncludedNodeJoined(input: { nodeId: number; name?: string; timestamp: string }): void {
+    inclusionChallenge.value = null;
+    foundIncludedNode.value = null;
+    provisioningMode.value = "include";
+    provisioningResult.value = "joined";
+    pendingIncludedNode.value = input;
+    provisioningSettlePollsRemaining.value = 0;
+  }
+
+  function finishProvisioningSuccess(): void {
+    inclusionChallenge.value = null;
+    provisioningMode.value = "idle";
+    provisioningResult.value = "success";
+    foundIncludedNode.value = null;
+    pendingIncludedNode.value = null;
+    provisioningSettlePollsRemaining.value = 0;
+  }
+
+  function finishProvisioningStopped(): void {
+    inclusionChallenge.value = null;
+    provisioningMode.value = "idle";
+    provisioningResult.value = "stopped";
+    foundIncludedNode.value = null;
+    pendingIncludedNode.value = null;
+    provisioningSettlePollsRemaining.value = 0;
+  }
+
+  function isInterviewComplete(node: Pick<NodeSummary, "ready" | "interviewStage">): boolean {
+    return Boolean(node.ready) || String(node.interviewStage ?? "").toLowerCase() === "complete";
+  }
+
+  function inferProvisioningResultFromNodes(): void {
+    if (provisioningMode.value === "include") {
+      const baselineIds = new Set(provisioningBaselineNodeIds.value);
+      const addedNode = nodes.value.find((item) => !baselineIds.has(item.nodeId));
+      if (addedNode) {
+        if (isInterviewComplete(addedNode)) {
+          latestIncludedNode.value = {
+            nodeId: addedNode.nodeId,
+            name: addedNode.name ?? addedNode.product,
+            timestamp: new Date().toISOString(),
+          };
+          finishProvisioningSuccess();
+          return;
+        }
+
+        markIncludedNodeJoined({
+          nodeId: addedNode.nodeId,
+          name: addedNode.name ?? addedNode.product,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (pendingIncludedNode.value) {
+        const joinedNode = nodes.value.find((item) => item.nodeId === pendingIncludedNode.value?.nodeId);
+        if (joinedNode && isInterviewComplete(joinedNode)) {
+          latestIncludedNode.value = {
+            nodeId: joinedNode.nodeId,
+            name: joinedNode.name ?? joinedNode.product ?? pendingIncludedNode.value.name,
+            timestamp: new Date().toISOString(),
+          };
+          finishProvisioningSuccess();
+        } else if (!joinedNode) {
+          finishProvisioningStopped();
+        }
+      }
+      return;
+    }
+
+    if (provisioningMode.value === "exclude") {
+      const currentIds = new Set(nodes.value.map((item) => item.nodeId));
+      const removedNodeId = provisioningBaselineNodeIds.value.find((nodeId) => !currentIds.has(nodeId));
+      if (removedNodeId != undefined) {
+        latestExcludedNode.value = {
+          nodeId: removedNodeId,
+          timestamp: new Date().toISOString(),
+        };
+        finishProvisioningSuccess();
+      }
+    }
+  }
+
+  function updateProvisioningSettlement(statusSnapshot: DriverStatus): void {
+    if (provisioningMode.value === "idle" || provisioningResult.value !== "running") {
+      return;
+    }
+
+    const isControllerStillBusy =
+      statusSnapshot.isInclusionActive ||
+      statusSnapshot.isExclusionActive ||
+      inclusionChallenge.value != null;
+
+    if (isControllerStillBusy) {
+      provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
+      return;
+    }
+
+    if (provisioningSettlePollsRemaining.value > 0) {
+      provisioningSettlePollsRemaining.value -= 1;
+      return;
+    }
+
+    finishProvisioningStopped();
   }
 
   async function bootstrap(): Promise<void> {
@@ -202,6 +332,12 @@ export const usePlatformStore = defineStore("platform", () => {
         } else if (provisioningMode.value === "idle" && !latestStatus.isExclusionActive) {
           inclusionChallenge.value = null;
         }
+
+        if (provisioningMode.value !== "idle" || provisioningResult.value === "running") {
+          await refreshNodes();
+          inferProvisioningResultFromNodes();
+          updateProvisioningSettlement(latestStatus);
+        }
       } catch {
         // Ignore transient polling failures while the websocket remains the primary source of truth.
       }
@@ -244,7 +380,10 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.inclusion.challenge") {
       inclusionChallenge.value = event.payload as InclusionChallenge;
+      foundIncludedNode.value = null;
       provisioningMode.value = "include";
+      provisioningResult.value = "running";
+      provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
       return;
     }
 
@@ -253,15 +392,51 @@ export const usePlatformStore = defineStore("platform", () => {
       return;
     }
 
+    if (event.type === "zwave.node.found") {
+      const payload = event.payload as { nodeId?: number };
+      foundIncludedNode.value = {
+        nodeId: payload.nodeId ?? 0,
+        timestamp: event.timestamp,
+      };
+      provisioningMode.value = "include";
+      provisioningResult.value = "running";
+      provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
+      return;
+    }
+
+    if (event.type === "zwave.inclusion.stopped" || event.type === "zwave.exclusion.stopped") {
+      provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
+      void refreshNodes()
+        .then(() => {
+          inferProvisioningResultFromNodes();
+        })
+        .catch(() => {
+          // Ignore transient sync issues and let the regular polling loop continue.
+        });
+      return;
+    }
+
     if (event.type === "zwave.node.added") {
       const payload = event.payload as { node?: NodeDetail };
-      latestIncludedNode.value = {
+      markIncludedNodeJoined({
         nodeId: payload.node?.nodeId ?? 0,
         name: payload.node?.name ?? payload.node?.product,
         timestamp: event.timestamp,
-      };
-      inclusionChallenge.value = null;
-      provisioningMode.value = "idle";
+      });
+      void refreshNodes();
+      return;
+    }
+
+    if (event.type === "zwave.node.ready") {
+      const payload = event.payload as NodeDetail;
+      if (!pendingIncludedNode.value || pendingIncludedNode.value.nodeId === payload.nodeId) {
+        latestIncludedNode.value = {
+          nodeId: payload.nodeId,
+          name: payload.name ?? payload.product,
+          timestamp: event.timestamp,
+        };
+        finishProvisioningSuccess();
+      }
       void refreshNodes();
       return;
     }
@@ -272,12 +447,25 @@ export const usePlatformStore = defineStore("platform", () => {
         nodeId: payload.nodeId ?? 0,
         timestamp: event.timestamp,
       };
-      provisioningMode.value = "idle";
+      finishProvisioningSuccess();
       void refreshNodes();
       return;
     }
 
     if (event.type === "zwave.node.updated") {
+      const payload = event.payload as NodeDetail;
+      if (
+        pendingIncludedNode.value &&
+        payload.nodeId === pendingIncludedNode.value.nodeId &&
+        isInterviewComplete(payload)
+      ) {
+        latestIncludedNode.value = {
+          nodeId: payload.nodeId,
+          name: payload.name ?? payload.product ?? pendingIncludedNode.value.name,
+          timestamp: event.timestamp,
+        };
+        finishProvisioningSuccess();
+      }
       void refreshNodes();
       return;
     }
@@ -333,7 +521,11 @@ export const usePlatformStore = defineStore("platform", () => {
   async function refreshNodes(): Promise<void> {
     nodes.value = (await apiClient.listNodes()).items;
     if (selectedNode.value) {
-      selectedNode.value = await apiClient.getNode(selectedNode.value.nodeId);
+      try {
+        selectedNode.value = await apiClient.getNode(selectedNode.value.nodeId);
+      } catch {
+        selectedNode.value = null;
+      }
     }
   }
 
@@ -354,8 +546,7 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function startInclusion(): Promise<void> {
-    resetProvisioningFlow();
-    provisioningMode.value = "include";
+    startProvisioning("include");
     await runAction("启动入网失败", async () => {
       try {
         await apiClient.startInclusion();
@@ -383,8 +574,7 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function startExclusion(): Promise<void> {
-    resetProvisioningFlow();
-    provisioningMode.value = "exclude";
+    startProvisioning("exclude");
     await runAction("启动排除失败", async () => {
       try {
         await apiClient.startExclusion();
@@ -465,8 +655,12 @@ export const usePlatformStore = defineStore("platform", () => {
     runLogs,
     configItems,
     inclusionChallenge,
+    foundIncludedNode,
+    pendingIncludedNode,
     latestIncludedNode,
     latestExcludedNode,
+    provisioningMode,
+    provisioningResult,
     selectedPortPath,
     wsState,
     errorMessage,

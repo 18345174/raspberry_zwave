@@ -6,11 +6,19 @@ import { usePlatformStore } from "../stores/platform";
 import { translateBooleanState, translateChallengeType, translateDriverPhase } from "../utils/ui-text";
 
 type FlowMode = "idle" | "include" | "exclude";
-type DialogStep = "search" | "grant" | "dsk" | "processing" | "include-success" | "exclude-success" | "stopped";
+type DialogStep =
+  | "search"
+  | "grant"
+  | "dsk"
+  | "processing"
+  | "include-added"
+  | "include-success"
+  | "exclude-success"
+  | "stopped";
 
 const platform = usePlatformStore();
 const dialogMode = ref<FlowMode>("idle");
-const includeUiStage = ref<"search" | "grant" | "dsk" | "processing">("search");
+const includeUiStage = ref<"search" | "found" | "grant" | "dsk" | "processing">("search");
 const form = reactive({
   pin: "",
   grant: [] as string[],
@@ -20,17 +28,17 @@ const form = reactive({
 const securityOptions = ["S2_AccessControl", "S2_Authenticated", "S2_Unauthenticated", "S0_Legacy"];
 
 const flowLabel = computed(() => {
-  if (platform.status.isInclusionActive) {
+  if (platform.provisioningMode === "include" || platform.status.isInclusionActive) {
     return "添加中";
   }
-  if (platform.status.isExclusionActive) {
+  if (platform.provisioningMode === "exclude" || platform.status.isExclusionActive) {
     return "删除中";
   }
   return "待机";
 });
 
 const flowTone = computed<"good" | "warn">(() => {
-  if (platform.status.isInclusionActive || platform.status.isExclusionActive) {
+  if (platform.provisioningMode !== "idle" || platform.status.isInclusionActive || platform.status.isExclusionActive) {
     return "warn";
   }
   return "good";
@@ -43,10 +51,18 @@ const challengeDsk = computed(() =>
 );
 
 const canStartInclusion = computed(
-  () => driverReady.value && !platform.status.isInclusionActive && !platform.status.isExclusionActive,
+  () =>
+    driverReady.value &&
+    platform.provisioningMode === "idle" &&
+    !platform.status.isInclusionActive &&
+    !platform.status.isExclusionActive,
 );
 const canStartExclusion = computed(
-  () => driverReady.value && !platform.status.isInclusionActive && !platform.status.isExclusionActive,
+  () =>
+    driverReady.value &&
+    platform.provisioningMode === "idle" &&
+    !platform.status.isInclusionActive &&
+    !platform.status.isExclusionActive,
 );
 
 const dialogOpen = computed(() => dialogMode.value !== "idle");
@@ -55,6 +71,9 @@ const dialogStep = computed<DialogStep>(() => {
   if (dialogMode.value === "include") {
     if (platform.latestIncludedNode) {
       return "include-success";
+    }
+    if (platform.pendingIncludedNode) {
+      return "include-added";
     }
     if (challengeType.value === "grant_security_classes") {
       return "grant";
@@ -65,10 +84,19 @@ const dialogStep = computed<DialogStep>(() => {
     if (platform.status.isInclusionActive) {
       return "search";
     }
+    if (includeUiStage.value === "found" || platform.foundIncludedNode) {
+      return "processing";
+    }
+    if (platform.provisioningResult === "running") {
+      return "processing";
+    }
+    if (platform.provisioningResult === "stopped") {
+      return "stopped";
+    }
     if (includeUiStage.value === "processing" || includeUiStage.value === "grant" || includeUiStage.value === "dsk") {
       return "processing";
     }
-    return "stopped";
+    return "search";
   }
 
   if (dialogMode.value === "exclude") {
@@ -78,7 +106,13 @@ const dialogStep = computed<DialogStep>(() => {
     if (platform.status.isExclusionActive) {
       return "search";
     }
-    return "stopped";
+    if (platform.provisioningResult === "running") {
+      return "processing";
+    }
+    if (platform.provisioningResult === "stopped") {
+      return "stopped";
+    }
+    return "search";
   }
 
   return "stopped";
@@ -93,8 +127,10 @@ const dialogTitle = computed(() => {
         return "输入 DSK 前 5 位";
       case "processing":
         return "正在添加设备";
+      case "include-added":
+        return "设备已加入网络";
       case "include-success":
-        return "设备已发现";
+        return "设备已准备就绪";
       case "stopped":
         return "添加流程已停止";
       default:
@@ -106,6 +142,9 @@ const dialogTitle = computed(() => {
     if (dialogStep.value === "exclude-success") {
       return "设备已删除";
     }
+    if (dialogStep.value === "processing") {
+      return "正在确认删除结果";
+    }
     if (dialogStep.value === "stopped") {
       return "删除流程已停止";
     }
@@ -116,11 +155,17 @@ const dialogTitle = computed(() => {
 });
 
 watch(
-  () => platform.inclusionChallenge?.requestId,
-  () => {
+  () => platform.inclusionChallenge,
+  (challenge) => {
     form.pin = "";
-    form.grant = [];
-    form.clientSideAuth = false;
+    form.grant =
+      challenge?.challengeType === "grant_security_classes"
+        ? [...securityOptions]
+        : [];
+    form.clientSideAuth =
+      challenge?.challengeType === "grant_security_classes"
+        ? challenge.clientSideAuth
+        : false;
   },
   { immediate: true },
 );
@@ -134,22 +179,35 @@ watch(
     }
     if (value === "validate_dsk") {
       includeUiStage.value = "dsk";
+      return;
+    }
+    if (platform.foundIncludedNode) {
+      includeUiStage.value = "found";
     }
   },
   { immediate: true },
 );
 
+watch(
+  () => platform.foundIncludedNode?.timestamp,
+  (timestamp) => {
+    if (timestamp && !platform.inclusionChallenge) {
+      includeUiStage.value = "found";
+    }
+  },
+);
+
 async function beginInclusion(): Promise<void> {
   includeUiStage.value = "search";
   await platform.startInclusion();
-  if (platform.status.isInclusionActive) {
+  if (platform.provisioningMode === "include" || platform.status.isInclusionActive || platform.inclusionChallenge) {
     dialogMode.value = "include";
   }
 }
 
 async function beginExclusion(): Promise<void> {
   await platform.startExclusion();
-  if (platform.status.isExclusionActive) {
+  if (platform.provisioningMode === "exclude" || platform.status.isExclusionActive) {
     dialogMode.value = "exclude";
   }
 }
@@ -277,11 +335,12 @@ function closeDialog(): void {
             class="ghost-button"
             @click="
               dialogStep === 'include-success' || dialogStep === 'exclude-success' || dialogStep === 'stopped'
+                || dialogStep === 'include-added'
                 ? closeDialog()
                 : stopActiveFlow()
             "
           >
-            {{ dialogStep === "include-success" || dialogStep === "exclude-success" || dialogStep === "stopped" ? "关闭" : "取消" }}
+            {{ dialogStep === "include-success" || dialogStep === "exclude-success" || dialogStep === "stopped" || dialogStep === "include-added" ? "关闭" : "取消" }}
           </button>
         </div>
 
@@ -346,15 +405,34 @@ function closeDialog(): void {
         <template v-else-if="dialogStep === 'processing'">
           <div class="flow-state">
             <div class="flow-spinner" />
-            <p class="flow-lead">安全信息已提交，正在继续完成设备添加。</p>
-            <p class="flow-copy">控制器正在和设备完成 S2 引导、密钥交换和后续握手。这个阶段可能持续几十秒，请不要关闭页面，也不要再次触发设备配网。</p>
+            <template v-if="dialogMode === 'include'">
+              <template v-if="platform.foundIncludedNode && !platform.inclusionChallenge">
+                <p class="flow-lead">已发现设备，正在请求安全确认。</p>
+                <p class="flow-copy">控制器正在识别设备能力并准备下一步安全协商。请保持设备靠近控制器，等待确认安全等级或输入 DSK 的提示出现。</p>
+              </template>
+              <template v-else>
+                <p class="flow-lead">安全信息已提交，正在继续完成设备添加。</p>
+                <p class="flow-copy">控制器正在和设备完成 S2 引导、密钥交换和后续握手。这个阶段可能持续几十秒，请不要关闭页面，也不要再次触发设备配网。</p>
+              </template>
+            </template>
+            <template v-else>
+              <p class="flow-lead">控制器已结束删除模式，正在确认设备是否已成功移除。</p>
+              <p class="flow-copy">系统会继续刷新节点列表一小段时间。如果设备刚完成删除，界面会自动切换到成功状态。</p>
+            </template>
+          </div>
+        </template>
+
+        <template v-else-if="dialogStep === 'include-added' && platform.pendingIncludedNode">
+          <div class="flow-state">
+            <p class="flow-lead">设备已加入网络，正在完成初始化。</p>
+            <p class="flow-copy">节点 {{ platform.pendingIncludedNode.nodeId }} {{ platform.pendingIncludedNode.name ? `（${platform.pendingIncludedNode.name}）` : "" }} 已加入网络。系统正在等待采访完成并同步能力信息，你现在可以关闭窗口稍后查看，也可以继续等待自动完成。</p>
           </div>
         </template>
 
         <template v-else-if="dialogStep === 'include-success' && platform.latestIncludedNode">
           <div class="flow-state">
-            <p class="flow-lead">已发现并开始采访新设备。</p>
-            <p class="flow-copy">节点 {{ platform.latestIncludedNode.nodeId }} {{ platform.latestIncludedNode.name ? `（${platform.latestIncludedNode.name}）` : "" }} 已加入网络，稍后可在节点页面查看详细信息。</p>
+            <p class="flow-lead">设备已完成初始化并准备就绪。</p>
+            <p class="flow-copy">节点 {{ platform.latestIncludedNode.nodeId }} {{ platform.latestIncludedNode.name ? `（${platform.latestIncludedNode.name}）` : "" }} 已完成采访，可在节点页面查看详细信息并开始测试。</p>
           </div>
         </template>
 
