@@ -40,6 +40,7 @@ export const usePlatformStore = defineStore("platform", () => {
   const runLogs = ref<Record<string, TestLogRecord[]>>({});
   const configItems = ref<Array<{ key: string; value: unknown }>>([]);
   const inclusionChallenge = ref<InclusionChallenge | null>(null);
+  const provisioningMode = ref<"idle" | "include" | "exclude">("idle");
   const latestIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestExcludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
   const selectedPortPath = ref<string>("");
@@ -58,6 +59,7 @@ export const usePlatformStore = defineStore("platform", () => {
 
   function resetProvisioningFlow(): void {
     inclusionChallenge.value = null;
+    provisioningMode.value = "idle";
     latestIncludedNode.value = null;
     latestExcludedNode.value = null;
   }
@@ -176,7 +178,9 @@ export const usePlatformStore = defineStore("platform", () => {
     if (
       nextStatus.phase === "connecting" ||
       nextStatus.isInclusionActive ||
-      nextStatus.isExclusionActive
+      nextStatus.isExclusionActive ||
+      provisioningMode.value !== "idle" ||
+      inclusionChallenge.value != null
     ) {
       startStatusPolling();
     } else {
@@ -193,9 +197,9 @@ export const usePlatformStore = defineStore("platform", () => {
       try {
         const latestStatus = await apiClient.getStatus();
         applyStatus(latestStatus);
-        if (latestStatus.isInclusionActive) {
+        if (provisioningMode.value === "include" || latestStatus.isInclusionActive || inclusionChallenge.value != null) {
           inclusionChallenge.value = (await apiClient.getInclusionChallenge()).challenge;
-        } else if (!latestStatus.isExclusionActive) {
+        } else if (provisioningMode.value === "idle" && !latestStatus.isExclusionActive) {
           inclusionChallenge.value = null;
         }
       } catch {
@@ -205,7 +209,9 @@ export const usePlatformStore = defineStore("platform", () => {
       if (
         status.value.phase === "connecting" ||
         status.value.isInclusionActive ||
-        status.value.isExclusionActive
+        status.value.isExclusionActive ||
+        provisioningMode.value !== "idle" ||
+        inclusionChallenge.value != null
       ) {
         statusPollTimer = window.setTimeout(poll, 1500);
         return;
@@ -238,6 +244,7 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.inclusion.challenge") {
       inclusionChallenge.value = event.payload as InclusionChallenge;
+      provisioningMode.value = "include";
       return;
     }
 
@@ -254,6 +261,7 @@ export const usePlatformStore = defineStore("platform", () => {
         timestamp: event.timestamp,
       };
       inclusionChallenge.value = null;
+      provisioningMode.value = "idle";
       void refreshNodes();
       return;
     }
@@ -264,6 +272,7 @@ export const usePlatformStore = defineStore("platform", () => {
         nodeId: payload.nodeId ?? 0,
         timestamp: event.timestamp,
       };
+      provisioningMode.value = "idle";
       void refreshNodes();
       return;
     }
@@ -346,6 +355,7 @@ export const usePlatformStore = defineStore("platform", () => {
 
   async function startInclusion(): Promise<void> {
     resetProvisioningFlow();
+    provisioningMode.value = "include";
     await runAction("启动入网失败", async () => {
       try {
         await apiClient.startInclusion();
@@ -367,11 +377,14 @@ export const usePlatformStore = defineStore("platform", () => {
     await runAction("停止入网失败", async () => {
       await apiClient.stopInclusion();
       applyStatus(await apiClient.getStatus());
+      provisioningMode.value = "idle";
+      inclusionChallenge.value = null;
     });
   }
 
   async function startExclusion(): Promise<void> {
     resetProvisioningFlow();
+    provisioningMode.value = "exclude";
     await runAction("启动排除失败", async () => {
       try {
         await apiClient.startExclusion();
@@ -393,6 +406,8 @@ export const usePlatformStore = defineStore("platform", () => {
     await runAction("停止排除失败", async () => {
       await apiClient.stopExclusion();
       applyStatus(await apiClient.getStatus());
+      provisioningMode.value = "idle";
+      inclusionChallenge.value = null;
     });
   }
 
