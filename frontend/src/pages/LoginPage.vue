@@ -30,12 +30,12 @@ async function submit(): Promise<void> {
       <h1 class="auth-title">Raspberry Z-Wave Test Platform</h1>
 
       <label class="field-stack">
-        <span>Username</span>
+        <span>用户名</span>
         <input v-model="form.username" class="text-input" autocomplete="username" />
       </label>
 
       <label class="field-stack">
-        <span>Password</span>
+        <span>密码</span>
         <input v-model="form.password" class="text-input" type="password" autocomplete="current-password" />
       </label>
 
