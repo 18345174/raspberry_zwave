@@ -2,9 +2,7 @@
 import { computed, onMounted, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
-import MetricCard from "./components/MetricCard.vue";
 import { usePlatformStore } from "./stores/platform";
-import { translateDriverPhase, translateRunStatus } from "./utils/ui-text";
 
 const platform = usePlatformStore();
 const route = useRoute();
@@ -13,7 +11,7 @@ const router = useRouter();
 const navItems = [
   { to: "/controller", label: "控制器" },
   { to: "/inclusion", label: "添加/删除设备" },
-  { to: "/nodes", label: "节点" },
+  { to: "/nodes", label: "设备列表" },
   { to: "/tests", label: "测试" },
   { to: "/system", label: "系统" },
 ];
@@ -74,12 +72,6 @@ function syncRouteWithAuth(): void {
     <main class="shell-main">
       <section class="page-header">
         <h2>{{ currentPageTitle }}</h2>
-      </section>
-
-      <section class="summary-strip">
-        <MetricCard compact eyebrow="驱动" title="运行状态" :value="translateDriverPhase(platform.status.phase)" :note="platform.status.connectedPortPath || '未连接串口'" />
-        <MetricCard compact eyebrow="清单" title="节点数量" :value="String(platform.nodes.length)" note="来自服务端节点快照" />
-        <MetricCard compact eyebrow="执行器" title="最近任务" :value="translateRunStatus(platform.latestRun?.status || 'idle')" :note="platform.latestRun?.id || '暂无测试记录'" />
       </section>
 
       <section class="content-panel">
