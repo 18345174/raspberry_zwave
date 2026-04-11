@@ -11,7 +11,6 @@ type DialogStep =
   | "grant"
   | "dsk"
   | "processing"
-  | "include-added"
   | "include-success"
   | "exclude-success"
   | "stopped";
@@ -72,9 +71,6 @@ const dialogStep = computed<DialogStep>(() => {
     if (platform.latestIncludedNode) {
       return "include-success";
     }
-    if (platform.pendingIncludedNode) {
-      return "include-added";
-    }
     if (challengeType.value === "grant_security_classes") {
       return "grant";
     }
@@ -127,8 +123,6 @@ const dialogTitle = computed(() => {
         return "输入 DSK 前 5 位";
       case "processing":
         return "正在添加设备";
-      case "include-added":
-        return "设备已加入网络";
       case "include-success":
         return "设备已准备就绪";
       case "stopped":
@@ -335,12 +329,11 @@ function closeDialog(): void {
             class="ghost-button"
             @click="
               dialogStep === 'include-success' || dialogStep === 'exclude-success' || dialogStep === 'stopped'
-                || dialogStep === 'include-added'
                 ? closeDialog()
                 : stopActiveFlow()
             "
           >
-            {{ dialogStep === "include-success" || dialogStep === "exclude-success" || dialogStep === "stopped" || dialogStep === "include-added" ? "关闭" : "取消" }}
+            {{ dialogStep === "include-success" || dialogStep === "exclude-success" || dialogStep === "stopped" ? "关闭" : "取消" }}
           </button>
         </div>
 
@@ -410,6 +403,10 @@ function closeDialog(): void {
                 <p class="flow-lead">已发现设备，正在请求安全确认。</p>
                 <p class="flow-copy">控制器正在识别设备能力并准备下一步安全协商。请保持设备靠近控制器，等待确认安全等级或输入 DSK 的提示出现。</p>
               </template>
+              <template v-else-if="platform.pendingIncludedNode">
+                <p class="flow-lead">设备已加入网络，正在等待初始化完成。</p>
+                <p class="flow-copy">节点 {{ platform.pendingIncludedNode.nodeId }} {{ platform.pendingIncludedNode.name ? `（${platform.pendingIncludedNode.name}）` : "" }} 已加入网络，但系统仍在等待采访完成或安全引导结束。若设备需要 S2 验证，界面会继续弹出确认安全等级或 DSK 输入。</p>
+              </template>
               <template v-else>
                 <p class="flow-lead">安全信息已提交，正在继续完成设备添加。</p>
                 <p class="flow-copy">控制器正在和设备完成 S2 引导、密钥交换和后续握手。这个阶段可能持续几十秒，请不要关闭页面，也不要再次触发设备配网。</p>
@@ -419,13 +416,6 @@ function closeDialog(): void {
               <p class="flow-lead">控制器已结束删除模式，正在确认设备是否已成功移除。</p>
               <p class="flow-copy">系统会继续刷新节点列表一小段时间。如果设备刚完成删除，界面会自动切换到成功状态。</p>
             </template>
-          </div>
-        </template>
-
-        <template v-else-if="dialogStep === 'include-added' && platform.pendingIncludedNode">
-          <div class="flow-state">
-            <p class="flow-lead">设备已加入网络，正在完成初始化。</p>
-            <p class="flow-copy">节点 {{ platform.pendingIncludedNode.nodeId }} {{ platform.pendingIncludedNode.name ? `（${platform.pendingIncludedNode.name}）` : "" }} 已加入网络。系统正在等待采访完成并同步能力信息，你现在可以关闭窗口稍后查看，也可以继续等待自动完成。</p>
           </div>
         </template>
 

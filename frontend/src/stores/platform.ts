@@ -26,7 +26,6 @@ const emptyStatus = (): DriverStatus => ({
 
 const PROVISIONING_SETTLE_POLLS = 20;
 const INCLUSION_DISCOVERY_GRACE_MS = 5000;
-const INCLUSION_NODE_ADDED_GRACE_MS = 5000;
 
 export const usePlatformStore = defineStore("platform", () => {
   const authSession = ref<AuthSessionView>({
@@ -45,9 +44,8 @@ export const usePlatformStore = defineStore("platform", () => {
   const configItems = ref<Array<{ key: string; value: unknown }>>([]);
   const inclusionChallenge = ref<InclusionChallenge | null>(null);
   const provisioningMode = ref<"idle" | "include" | "exclude">("idle");
-  const provisioningResult = ref<"idle" | "running" | "joined" | "success" | "stopped">("idle");
+  const provisioningResult = ref<"idle" | "running" | "success" | "stopped">("idle");
   const foundIncludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
-  const joinedCandidateNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const pendingIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestExcludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
@@ -72,7 +70,6 @@ export const usePlatformStore = defineStore("platform", () => {
     provisioningMode.value = "idle";
     provisioningResult.value = "idle";
     foundIncludedNode.value = null;
-    joinedCandidateNode.value = null;
     pendingIncludedNode.value = null;
     latestIncludedNode.value = null;
     latestExcludedNode.value = null;
@@ -92,22 +89,11 @@ export const usePlatformStore = defineStore("platform", () => {
     provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
   }
 
-  function markIncludedNodeJoined(input: { nodeId: number; name?: string; timestamp: string }): void {
-    inclusionChallenge.value = null;
-    foundIncludedNode.value = null;
-    joinedCandidateNode.value = null;
-    provisioningMode.value = "include";
-    provisioningResult.value = "joined";
-    pendingIncludedNode.value = input;
-    provisioningSettlePollsRemaining.value = 0;
-  }
-
   function finishProvisioningSuccess(): void {
     inclusionChallenge.value = null;
     provisioningMode.value = "idle";
     provisioningResult.value = "success";
     foundIncludedNode.value = null;
-    joinedCandidateNode.value = null;
     pendingIncludedNode.value = null;
     provisioningSettlePollsRemaining.value = 0;
   }
@@ -117,7 +103,6 @@ export const usePlatformStore = defineStore("platform", () => {
     provisioningMode.value = "idle";
     provisioningResult.value = "stopped";
     foundIncludedNode.value = null;
-    joinedCandidateNode.value = null;
     pendingIncludedNode.value = null;
     provisioningSettlePollsRemaining.value = 0;
   }
@@ -133,47 +118,11 @@ export const usePlatformStore = defineStore("platform", () => {
     return Date.now() - Date.parse(foundIncludedNode.value.timestamp) < INCLUSION_DISCOVERY_GRACE_MS;
   }
 
-  function isWithinNodeAddedGrace(): boolean {
-    if (!joinedCandidateNode.value?.timestamp) {
-      return false;
-    }
-    return Date.now() - Date.parse(joinedCandidateNode.value.timestamp) < INCLUSION_NODE_ADDED_GRACE_MS;
-  }
-
   function inferProvisioningResultFromNodes(): void {
     if (provisioningMode.value === "include") {
-      // Do not convert a freshly discovered node into "success" before the controller
-      // has a chance to surface the S2/DTK challenge for secure devices.
+      // Never treat mere node appearance as success. Secure devices may emit
+      // `node added` before the S2 challenge arrives, so wait for interview/ready.
       if (inclusionChallenge.value || isWithinInclusionDiscoveryGrace()) {
-        return;
-      }
-
-      const baselineIds = new Set(provisioningBaselineNodeIds.value);
-      const addedNode = nodes.value.find((item) => !baselineIds.has(item.nodeId));
-      if (addedNode) {
-        if (isInterviewComplete(addedNode)) {
-          latestIncludedNode.value = {
-            nodeId: addedNode.nodeId,
-            name: addedNode.name ?? addedNode.product,
-            timestamp: new Date().toISOString(),
-          };
-          finishProvisioningSuccess();
-          return;
-        }
-
-        markIncludedNodeJoined({
-          nodeId: addedNode.nodeId,
-          name: addedNode.name ?? addedNode.product,
-          timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      if (joinedCandidateNode.value) {
-        if (inclusionChallenge.value || isWithinNodeAddedGrace()) {
-          return;
-        }
-        markIncludedNodeJoined(joinedCandidateNode.value);
         return;
       }
 
@@ -461,7 +410,7 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.node.added") {
       const payload = event.payload as { node?: NodeDetail };
-      joinedCandidateNode.value = {
+      pendingIncludedNode.value = {
         nodeId: payload.node?.nodeId ?? 0,
         name: payload.node?.name ?? payload.node?.product,
         timestamp: event.timestamp,
