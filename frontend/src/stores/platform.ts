@@ -25,6 +25,7 @@ const emptyStatus = (): DriverStatus => ({
 });
 
 const PROVISIONING_SETTLE_POLLS = 20;
+const INCLUSION_DISCOVERY_GRACE_MS = 5000;
 
 export const usePlatformStore = defineStore("platform", () => {
   const authSession = ref<AuthSessionView>({
@@ -119,8 +120,21 @@ export const usePlatformStore = defineStore("platform", () => {
     return Boolean(node.ready) || String(node.interviewStage ?? "").toLowerCase() === "complete";
   }
 
+  function isWithinInclusionDiscoveryGrace(): boolean {
+    if (!foundIncludedNode.value?.timestamp) {
+      return false;
+    }
+    return Date.now() - Date.parse(foundIncludedNode.value.timestamp) < INCLUSION_DISCOVERY_GRACE_MS;
+  }
+
   function inferProvisioningResultFromNodes(): void {
     if (provisioningMode.value === "include") {
+      // Do not convert a freshly discovered node into "success" before the controller
+      // has a chance to surface the S2/DTK challenge for secure devices.
+      if (inclusionChallenge.value || isWithinInclusionDiscoveryGrace()) {
+        return;
+      }
+
       const baselineIds = new Set(provisioningBaselineNodeIds.value);
       const addedNode = nodes.value.find((item) => !baselineIds.has(item.nodeId));
       if (addedNode) {
@@ -404,7 +418,15 @@ export const usePlatformStore = defineStore("platform", () => {
       return;
     }
 
-    if (event.type === "zwave.inclusion.stopped" || event.type === "zwave.exclusion.stopped") {
+    if (event.type === "zwave.inclusion.stopped") {
+      provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
+      void refreshNodes().catch(() => {
+        // Ignore transient sync issues and let the regular polling loop continue.
+      });
+      return;
+    }
+
+    if (event.type === "zwave.exclusion.stopped") {
       provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
       void refreshNodes()
         .then(() => {
