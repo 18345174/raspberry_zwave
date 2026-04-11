@@ -26,6 +26,7 @@ const emptyStatus = (): DriverStatus => ({
 
 const PROVISIONING_SETTLE_POLLS = 20;
 const INCLUSION_DISCOVERY_GRACE_MS = 5000;
+const INCLUSION_NODE_ADDED_GRACE_MS = 5000;
 
 export const usePlatformStore = defineStore("platform", () => {
   const authSession = ref<AuthSessionView>({
@@ -46,6 +47,7 @@ export const usePlatformStore = defineStore("platform", () => {
   const provisioningMode = ref<"idle" | "include" | "exclude">("idle");
   const provisioningResult = ref<"idle" | "running" | "joined" | "success" | "stopped">("idle");
   const foundIncludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
+  const joinedCandidateNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const pendingIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestExcludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
@@ -70,6 +72,7 @@ export const usePlatformStore = defineStore("platform", () => {
     provisioningMode.value = "idle";
     provisioningResult.value = "idle";
     foundIncludedNode.value = null;
+    joinedCandidateNode.value = null;
     pendingIncludedNode.value = null;
     latestIncludedNode.value = null;
     latestExcludedNode.value = null;
@@ -92,6 +95,7 @@ export const usePlatformStore = defineStore("platform", () => {
   function markIncludedNodeJoined(input: { nodeId: number; name?: string; timestamp: string }): void {
     inclusionChallenge.value = null;
     foundIncludedNode.value = null;
+    joinedCandidateNode.value = null;
     provisioningMode.value = "include";
     provisioningResult.value = "joined";
     pendingIncludedNode.value = input;
@@ -103,6 +107,7 @@ export const usePlatformStore = defineStore("platform", () => {
     provisioningMode.value = "idle";
     provisioningResult.value = "success";
     foundIncludedNode.value = null;
+    joinedCandidateNode.value = null;
     pendingIncludedNode.value = null;
     provisioningSettlePollsRemaining.value = 0;
   }
@@ -112,6 +117,7 @@ export const usePlatformStore = defineStore("platform", () => {
     provisioningMode.value = "idle";
     provisioningResult.value = "stopped";
     foundIncludedNode.value = null;
+    joinedCandidateNode.value = null;
     pendingIncludedNode.value = null;
     provisioningSettlePollsRemaining.value = 0;
   }
@@ -125,6 +131,13 @@ export const usePlatformStore = defineStore("platform", () => {
       return false;
     }
     return Date.now() - Date.parse(foundIncludedNode.value.timestamp) < INCLUSION_DISCOVERY_GRACE_MS;
+  }
+
+  function isWithinNodeAddedGrace(): boolean {
+    if (!joinedCandidateNode.value?.timestamp) {
+      return false;
+    }
+    return Date.now() - Date.parse(joinedCandidateNode.value.timestamp) < INCLUSION_NODE_ADDED_GRACE_MS;
   }
 
   function inferProvisioningResultFromNodes(): void {
@@ -153,6 +166,14 @@ export const usePlatformStore = defineStore("platform", () => {
           name: addedNode.name ?? addedNode.product,
           timestamp: new Date().toISOString(),
         });
+        return;
+      }
+
+      if (joinedCandidateNode.value) {
+        if (inclusionChallenge.value || isWithinNodeAddedGrace()) {
+          return;
+        }
+        markIncludedNodeJoined(joinedCandidateNode.value);
         return;
       }
 
@@ -440,11 +461,14 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.node.added") {
       const payload = event.payload as { node?: NodeDetail };
-      markIncludedNodeJoined({
+      joinedCandidateNode.value = {
         nodeId: payload.node?.nodeId ?? 0,
         name: payload.node?.name ?? payload.node?.product,
         timestamp: event.timestamp,
-      });
+      };
+      provisioningMode.value = "include";
+      provisioningResult.value = "running";
+      provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
       void refreshNodes();
       return;
     }
