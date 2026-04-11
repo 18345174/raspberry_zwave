@@ -55,7 +55,15 @@
 ## 部署脚本
 
 - `deploy/scripts/one-click-deploy-rpi.sh`：树莓派 Ubuntu 一键部署；默认登录密码 `123456`
+- `deploy/scripts/tail-logs.sh`：实时查看 systemd 服务日志，支持 `all` / `zwave` / `errors`
 - `deploy/scripts/prepare-ubuntu.sh`：安装 Ubuntu 依赖与 Node.js LTS
 - `deploy/scripts/bootstrap-env.sh`：从样例生成 `backend/.env`
 - `deploy/scripts/install.sh`：同步代码、安装依赖、构建并注册 systemd
 - `backend/scripts/generate-password-hash.mjs`：生成 `ADMIN_PASSWORD_HASH`
+
+## 日志查看
+
+- 实时查看 Z-Wave 相关日志：`bash deploy/scripts/tail-logs.sh`
+- 实时查看全部服务日志：`bash deploy/scripts/tail-logs.sh all`
+- 仅查看错误相关日志：`bash deploy/scripts/tail-logs.sh errors`
+- 如当前用户没有 journal 权限，脚本会自动尝试走 `sudo journalctl`
