@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 
 import StatusPill from "../components/StatusPill.vue";
 import { usePlatformStore } from "../stores/platform";
@@ -7,49 +7,81 @@ import { translateDriverPhase, translatePortKind } from "../utils/ui-text";
 
 const platform = usePlatformStore();
 
+const draftPortPath = ref("");
 const selectedPort = computed(() => platform.ports.find((item) => item.path === platform.selectedPortPath));
+const draftPort = computed(() => platform.ports.find((item) => item.path === draftPortPath.value));
 const isBusy = computed(() => platform.status.phase === "connecting" || platform.status.phase === "disconnecting");
 const canConnect = computed(() => Boolean(platform.selectedPortPath) && !isBusy.value && platform.status.phase !== "ready");
 const canReconnect = computed(() => Boolean(platform.selectedPortPath) && !isBusy.value);
 const canDisconnect = computed(() => !isBusy.value && platform.status.phase !== "idle");
 
+watch(
+  () => platform.selectedPortPath,
+  (value) => {
+    draftPortPath.value = value;
+  },
+  { immediate: true },
+);
+
 async function handleRefresh(): Promise<void> {
   await platform.refreshPorts();
 }
 
-async function handleSave(path: string, stablePath?: string): Promise<void> {
-  await platform.saveSelectedPort(path, stablePath);
+async function handleSave(): Promise<void> {
+  if (!draftPort.value) {
+    return;
+  }
+  await platform.saveSelectedPort(draftPort.value.path, draftPort.value.stablePath);
 }
 </script>
 
 <template>
   <div class="page-grid">
-    <section class="page-card">
+    <section class="page-card accent-card">
       <div class="section-heading">
         <div>
           <p class="section-kicker">串口发现</p>
-          <h3>控制器选择与连接</h3>
+          <h3>控制器与运行状态</h3>
         </div>
         <button class="ghost-button" @click="handleRefresh">重新扫描</button>
       </div>
 
-      <div class="port-grid">
-        <article v-for="port in platform.ports" :key="port.path" class="port-card" :data-active="platform.selectedPortPath === port.path">
-          <div class="port-title-row">
-            <h4>{{ port.stablePath || port.path }}</h4>
-            <StatusPill :label="translatePortKind(port.isCandidateController)" :tone="port.isCandidateController ? 'good' : 'neutral'" />
-          </div>
-          <p class="port-meta">实际路径：{{ port.path }}</p>
-          <p class="port-meta">VID/PID：{{ port.vendorId || '-' }} / {{ port.productId || '-' }}</p>
-          <button class="primary-button" @click="handleSave(port.path, port.stablePath)">
-            {{ platform.selectedPortPath === port.path ? '已选择' : '选择此控制器' }}
-          </button>
-        </article>
+      <div class="field-stack">
+        <span>控制器串口</span>
+        <select v-model="draftPortPath" class="text-input">
+          <option value="">请选择串口</option>
+          <option v-for="port in platform.ports" :key="port.path" :value="port.path">
+            {{ port.stablePath || port.path }}（{{ translatePortKind(port.isCandidateController) }}）
+          </option>
+        </select>
       </div>
-    </section>
 
-    <section class="page-card accent-card">
-      <div class="section-heading">
+      <div v-if="draftPort" class="details-grid">
+        <div>
+          <dt>稳定路径</dt>
+          <dd>{{ draftPort.stablePath || '-' }}</dd>
+        </div>
+        <div>
+          <dt>设备类型</dt>
+          <dd>{{ translatePortKind(draftPort.isCandidateController) }}</dd>
+        </div>
+        <div>
+          <dt>厂商</dt>
+          <dd>{{ draftPort.manufacturer || '-' }}</dd>
+        </div>
+        <div>
+          <dt>VID/PID</dt>
+          <dd>{{ draftPort.vendorId || '-' }} / {{ draftPort.productId || '-' }}</dd>
+        </div>
+      </div>
+
+      <div class="button-row">
+        <button class="primary-button" :disabled="!draftPort" @click="handleSave">
+          {{ draftPortPath && draftPortPath === platform.selectedPortPath ? '已选择当前串口' : '保存串口选择' }}
+        </button>
+      </div>
+
+      <div class="section-heading controller-status-heading">
         <div>
           <p class="section-kicker">驱动生命周期</p>
           <h3>运行状态</h3>

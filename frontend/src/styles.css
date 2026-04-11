@@ -100,6 +100,8 @@ pre,
 }
 
 .sidebar-title {
+  font-size: 1.35rem;
+  text-align: center;
   padding-bottom: 18px;
   border-bottom: 1px solid rgba(244, 235, 255, 0.12);
 }
@@ -243,6 +245,10 @@ pre,
   gap: 16px;
   align-items: center;
   margin-bottom: 18px;
+}
+
+.controller-status-heading {
+  margin-top: 24px;
 }
 
 .primary-button,
