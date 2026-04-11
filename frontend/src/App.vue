@@ -3,9 +3,8 @@ import { computed, onMounted, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
 import MetricCard from "./components/MetricCard.vue";
-import StatusPill from "./components/StatusPill.vue";
 import { usePlatformStore } from "./stores/platform";
-import { translateDriverPhase, translateRunStatus, translateWsState } from "./utils/ui-text";
+import { translateDriverPhase, translateRunStatus } from "./utils/ui-text";
 
 const platform = usePlatformStore();
 const route = useRoute();
@@ -21,20 +20,6 @@ const navItems = [
 
 const isLoginRoute = computed(() => route.path === "/login");
 const currentPageTitle = computed(() => navItems.find((item) => item.to === route.path)?.label ?? "控制台");
-
-const statusTone = computed(() => {
-  switch (platform.status.phase) {
-    case "ready":
-      return "good";
-    case "connecting":
-    case "disconnecting":
-      return "warn";
-    case "error":
-      return "bad";
-    default:
-      return "neutral";
-  }
-});
 
 onMounted(async () => {
   await platform.bootstrap();
@@ -67,7 +52,9 @@ function syncRouteWithAuth(): void {
 
   <div v-else class="shell">
     <aside class="shell-sidebar">
-      <h1 class="sidebar-title">Z-Wave 测试平台</h1>
+      <div class="sidebar-brand">
+        <h1 class="sidebar-title">Z-Wave 测试平台</h1>
+      </div>
 
       <nav class="sidebar-nav">
         <RouterLink
@@ -80,13 +67,6 @@ function syncRouteWithAuth(): void {
           {{ item.label }}
         </RouterLink>
       </nav>
-
-      <div class="sidebar-status">
-        <StatusPill :label="translateDriverPhase(platform.status.phase)" :tone="statusTone" />
-        <span class="sidebar-ws">
-          {{ platform.authSession.isAuthenticated ? `用户：${platform.authSession.username}` : "访客" }} / WebSocket：{{ translateWsState(platform.wsState) }}
-        </span>
-      </div>
 
       <button class="ghost-button sidebar-logout" @click="platform.logout">退出登录</button>
     </aside>
