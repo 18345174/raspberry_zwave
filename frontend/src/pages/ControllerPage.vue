@@ -7,6 +7,10 @@ import { usePlatformStore } from "../stores/platform";
 const platform = usePlatformStore();
 
 const selectedPort = computed(() => platform.ports.find((item) => item.path === platform.selectedPortPath));
+const isBusy = computed(() => platform.status.phase === "connecting" || platform.status.phase === "disconnecting");
+const canConnect = computed(() => Boolean(platform.selectedPortPath) && !isBusy.value && platform.status.phase !== "ready");
+const canReconnect = computed(() => Boolean(platform.selectedPortPath) && !isBusy.value);
+const canDisconnect = computed(() => !isBusy.value && platform.status.phase !== "idle");
 
 async function handleRefresh(): Promise<void> {
   await platform.refreshPorts();
@@ -72,12 +76,15 @@ async function handleSave(path: string, stablePath?: string): Promise<void> {
       </dl>
 
       <div class="button-row">
-        <button class="primary-button" @click="platform.connectDriver">连接</button>
-        <button class="ghost-button" @click="platform.reconnectDriver">重连</button>
-        <button class="ghost-button danger" @click="platform.disconnectDriver">断开</button>
+        <button class="primary-button" :disabled="!canConnect" @click="platform.connectDriver">
+          {{ platform.status.phase === "connecting" ? "连接中..." : "连接" }}
+        </button>
+        <button class="ghost-button" :disabled="!canReconnect" @click="platform.reconnectDriver">重连</button>
+        <button class="ghost-button danger" :disabled="!canDisconnect" @click="platform.disconnectDriver">断开</button>
       </div>
 
       <p v-if="platform.status.lastError" class="error-text">{{ platform.status.lastError }}</p>
+      <p v-else-if="platform.status.phase === 'connecting'" class="port-meta">Driver 已启动，正在等待 Controller ready。</p>
     </section>
   </div>
 </template>

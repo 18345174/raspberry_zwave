@@ -71,7 +71,9 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/zwave/connect", async () => {
     const status = await services.zwaveRuntime.connect();
-    await services.nodeRegistry.syncAll();
+    if (status.hasReadyDriver) {
+      await services.nodeRegistry.syncAll();
+    }
     return status;
   });
 
@@ -81,7 +83,9 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/zwave/reconnect", async () => {
     const status = await services.zwaveRuntime.reconnect();
-    await services.nodeRegistry.syncAll();
+    if (status.hasReadyDriver) {
+      await services.nodeRegistry.syncAll();
+    }
     return status;
   });
 

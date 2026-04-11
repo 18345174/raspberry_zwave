@@ -49,6 +49,14 @@ export class ZwaveRuntimeService {
     if (!selection.selectedPortPath) {
       throw new Error("No controller port has been selected.");
     }
+    const currentStatus = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);
+    if (
+      currentStatus.connectedPortPath === selection.selectedPortPath &&
+      (currentStatus.phase === "connecting" || currentStatus.phase === "ready")
+    ) {
+      this.storage.saveDriverStatus(currentStatus);
+      return currentStatus;
+    }
     await this.adapter.connect(selection.selectedPortPath);
     const status = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);
     this.storage.saveControllerSelection({
@@ -74,6 +82,11 @@ export class ZwaveRuntimeService {
     const selection = this.storage.getControllerSelection();
     if (!selection.selectedPortPath) {
       throw new Error("No controller port has been selected.");
+    }
+    const currentStatus = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);
+    if (currentStatus.phase === "connecting") {
+      this.storage.saveDriverStatus(currentStatus);
+      return currentStatus;
     }
     await this.adapter.reconnect(selection.selectedPortPath);
     const status = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);

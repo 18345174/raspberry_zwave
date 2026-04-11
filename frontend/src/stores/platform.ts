@@ -45,6 +45,10 @@ export const usePlatformStore = defineStore("platform", () => {
   const errorMessage = ref("");
   let socket: WebSocket | null = null;
 
+  function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   async function bootstrap(): Promise<void> {
     errorMessage.value = "";
 
@@ -88,7 +92,7 @@ export const usePlatformStore = defineStore("platform", () => {
 
       connectWebSocket(true);
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : String(error);
+      errorMessage.value = getErrorMessage(error);
       pushNotification("Bootstrap Failed", errorMessage.value);
     }
   }
@@ -162,7 +166,11 @@ export const usePlatformStore = defineStore("platform", () => {
     }
 
     if (event.type === "zwave.status.changed") {
+      const previousReady = status.value.hasReadyDriver;
       status.value = event.payload as DriverStatus;
+      if (!previousReady && status.value.hasReadyDriver) {
+        void refreshNodes();
+      }
       return;
     }
 
@@ -206,17 +214,27 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function connectDriver(): Promise<void> {
-    status.value = await apiClient.connect();
-    await refreshNodes();
+    await runAction("连接失败", async () => {
+      status.value = await apiClient.connect();
+      if (status.value.hasReadyDriver) {
+        await refreshNodes();
+      }
+    });
   }
 
   async function disconnectDriver(): Promise<void> {
-    status.value = await apiClient.disconnect();
+    await runAction("断开失败", async () => {
+      status.value = await apiClient.disconnect();
+    });
   }
 
   async function reconnectDriver(): Promise<void> {
-    status.value = await apiClient.reconnect();
-    await refreshNodes();
+    await runAction("重连失败", async () => {
+      status.value = await apiClient.reconnect();
+      if (status.value.hasReadyDriver) {
+        await refreshNodes();
+      }
+    });
   }
 
   async function refreshNodes(): Promise<void> {
@@ -243,19 +261,27 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function startInclusion(): Promise<void> {
-    await apiClient.startInclusion();
+    await runAction("启动入网失败", async () => {
+      await apiClient.startInclusion();
+    });
   }
 
   async function stopInclusion(): Promise<void> {
-    await apiClient.stopInclusion();
+    await runAction("停止入网失败", async () => {
+      await apiClient.stopInclusion();
+    });
   }
 
   async function startExclusion(): Promise<void> {
-    await apiClient.startExclusion();
+    await runAction("启动排除失败", async () => {
+      await apiClient.startExclusion();
+    });
   }
 
   async function stopExclusion(): Promise<void> {
-    await apiClient.stopExclusion();
+    await runAction("停止排除失败", async () => {
+      await apiClient.stopExclusion();
+    });
   }
 
   async function submitGrantSecurity(payload: { requestId: string; grant: string[]; clientSideAuth: boolean }): Promise<void> {
@@ -275,7 +301,9 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function cancelRun(runId: string): Promise<void> {
-    await apiClient.cancelRun(runId);
+    await runAction("取消测试失败", async () => {
+      await apiClient.cancelRun(runId);
+    });
   }
 
   async function pingNode(nodeId: number): Promise<boolean> {
@@ -284,6 +312,16 @@ export const usePlatformStore = defineStore("platform", () => {
 
   async function healNode(nodeId: number): Promise<unknown> {
     return (await apiClient.healNode(nodeId)).result;
+  }
+
+  async function runAction(title: string, handler: () => Promise<void>): Promise<void> {
+    errorMessage.value = "";
+    try {
+      await handler();
+    } catch (error) {
+      errorMessage.value = getErrorMessage(error);
+      pushNotification(title, errorMessage.value);
+    }
   }
 
   const latestRun = computed(() => runs.value[0] ?? null);
