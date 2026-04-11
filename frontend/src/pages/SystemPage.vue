@@ -30,26 +30,26 @@ async function saveToken(): Promise<void> {
     <section class="page-card">
       <div class="section-heading">
         <div>
-          <p class="section-kicker">Service Health</p>
+          <p class="section-kicker">服务健康</p>
           <h3>系统状态</h3>
         </div>
       </div>
 
       <dl class="details-grid" v-if="platform.health">
         <div>
-          <dt>Version</dt>
+          <dt>版本</dt>
           <dd>{{ platform.health.version }}</dd>
         </div>
         <div>
-          <dt>Uptime</dt>
-          <dd>{{ platform.health.uptimeSec }} sec</dd>
+          <dt>运行时长</dt>
+          <dd>{{ platform.health.uptimeSec }} 秒</dd>
         </div>
         <div>
-          <dt>WebSocket Clients</dt>
+          <dt>WebSocket 客户端</dt>
           <dd>{{ platform.health.activeWebSocketClients }}</dd>
         </div>
         <div>
-          <dt>Active Run</dt>
+          <dt>当前任务</dt>
           <dd>{{ platform.health.activeTestRunId || '-' }}</dd>
         </div>
       </dl>
@@ -58,20 +58,20 @@ async function saveToken(): Promise<void> {
     <section class="page-card accent-card">
       <div class="section-heading">
         <div>
-          <p class="section-kicker">Config Surface</p>
+          <p class="section-kicker">配置面板</p>
           <h3>系统配置</h3>
         </div>
       </div>
 
       <div class="field-stack">
-        <input v-model="form.key" class="text-input" placeholder="config key" />
-        <input v-model="form.value" class="text-input" placeholder="config value" />
+        <input v-model="form.key" class="text-input" placeholder="配置键" />
+        <input v-model="form.value" class="text-input" placeholder="配置值" />
         <button class="primary-button" @click="saveConfig">写入配置</button>
       </div>
 
       <div class="field-stack">
-        <input v-model="form.apiToken" class="text-input" placeholder="browser API token" />
-        <button class="ghost-button" @click="saveToken">保存浏览器 Token</button>
+        <input v-model="form.apiToken" class="text-input" placeholder="浏览器 API 令牌" />
+        <button class="ghost-button" @click="saveToken">保存浏览器令牌</button>
         <button class="ghost-button danger" @click="platform.logout">注销登录会话</button>
       </div>
 

@@ -27,7 +27,7 @@ async function submit(): Promise<void> {
 <template>
   <section class="auth-panel">
     <section class="auth-card">
-      <h1 class="auth-title">Raspberry Z-Wave Test Platform</h1>
+      <h1 class="auth-title">树莓派 Z-Wave 测试平台</h1>
 
       <label class="field-stack">
         <span>用户名</span>

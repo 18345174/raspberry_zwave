@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
+import { translateChallengeType } from "../utils/ui-text";
 import type {
   AppEvent,
   AuthSessionView,
@@ -95,7 +96,7 @@ export const usePlatformStore = defineStore("platform", () => {
       connectWebSocket(true);
     } catch (error) {
       errorMessage.value = getErrorMessage(error);
-      pushNotification("Bootstrap Failed", errorMessage.value);
+      pushNotification("初始化失败", errorMessage.value);
     }
   }
 
@@ -222,13 +223,13 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.inclusion.challenge") {
       inclusionChallenge.value = event.payload as Record<string, unknown>;
-      pushNotification("Inclusion Challenge", String((event.payload as { challengeType?: string }).challengeType ?? "unknown"));
+      pushNotification("入网挑战", translateChallengeType(String((event.payload as { challengeType?: string }).challengeType ?? "未知")));
       return;
     }
 
     if (event.type === "zwave.inclusion.challenge.aborted") {
       inclusionChallenge.value = null;
-      pushNotification("Inclusion", "安全授权流程已中止");
+      pushNotification("入网流程", "安全授权流程已中止");
       return;
     }
 

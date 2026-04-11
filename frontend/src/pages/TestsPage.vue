@@ -2,6 +2,7 @@
 import { computed, reactive } from "vue";
 
 import { usePlatformStore } from "../stores/platform";
+import { translateRunStatus } from "../utils/ui-text";
 
 const platform = usePlatformStore();
 const form = reactive({
@@ -38,7 +39,7 @@ async function loadLogs(runId: string): Promise<void> {
     <section class="page-card">
       <div class="section-heading">
         <div>
-          <p class="section-kicker">Test Engine</p>
+          <p class="section-kicker">测试引擎</p>
           <h3>创建测试任务</h3>
         </div>
       </div>
@@ -48,7 +49,7 @@ async function loadLogs(runId: string): Promise<void> {
         <select v-model="form.nodeId" class="text-input">
           <option value="0">请选择节点</option>
           <option v-for="node in platform.nodes" :key="node.nodeId" :value="node.nodeId">
-            #{{ node.nodeId }} {{ node.product || node.name || 'Unnamed node' }}
+            #{{ node.nodeId }} {{ node.product || node.name || '未命名节点' }}
           </option>
         </select>
       </label>
@@ -64,7 +65,7 @@ async function loadLogs(runId: string): Promise<void> {
       </label>
 
       <label class="field-stack">
-        <span>inputs JSON</span>
+        <span>输入参数 JSON</span>
         <textarea v-model="form.inputsJson" class="text-input code-input" rows="10" />
       </label>
 
@@ -74,7 +75,7 @@ async function loadLogs(runId: string): Promise<void> {
     <section class="page-card accent-card">
       <div class="section-heading">
         <div>
-          <p class="section-kicker">Live Trace</p>
+          <p class="section-kicker">实时跟踪</p>
           <h3>任务与日志</h3>
         </div>
       </div>
@@ -85,12 +86,12 @@ async function loadLogs(runId: string): Promise<void> {
             <strong>{{ run.testDefinitionId }}</strong>
             <p>{{ run.id }}</p>
           </div>
-          <span>{{ run.status }}</span>
+          <span>{{ translateRunStatus(run.status) }}</span>
         </button>
       </div>
 
       <div v-if="activeRun" class="run-summary">
-        <p class="mono-line">Active: {{ activeRun.id }}</p>
+        <p class="mono-line">当前任务：{{ activeRun.id }}</p>
         <button class="ghost-button danger" @click="platform.cancelRun(activeRun.id)">取消任务</button>
       </div>
 

@@ -5,17 +5,18 @@ import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import MetricCard from "./components/MetricCard.vue";
 import StatusPill from "./components/StatusPill.vue";
 import { usePlatformStore } from "./stores/platform";
+import { translateDriverPhase, translateRunStatus, translateWsState } from "./utils/ui-text";
 
 const platform = usePlatformStore();
 const route = useRoute();
 const router = useRouter();
 
 const navItems = [
-  { to: "/controller", label: "Controller" },
-  { to: "/inclusion", label: "Inclusion" },
-  { to: "/nodes", label: "Nodes" },
-  { to: "/tests", label: "Tests" },
-  { to: "/system", label: "System" },
+  { to: "/controller", label: "控制器" },
+  { to: "/inclusion", label: "入排网" },
+  { to: "/nodes", label: "节点" },
+  { to: "/tests", label: "测试" },
+  { to: "/system", label: "系统" },
 ];
 
 const isLoginRoute = computed(() => route.path === "/login");
@@ -67,7 +68,7 @@ function syncRouteWithAuth(): void {
     <aside class="shell-sidebar">
       <div>
         <p class="sidebar-kicker">Raspberry Pi 4B / Ubuntu</p>
-        <h1>Z-Wave Lab Deck</h1>
+        <h1>Z-Wave 测试平台</h1>
         <p class="sidebar-copy">
           后端直连 <code>zwave-js</code>，浏览器仅通过 HTTP + WebSocket 展示与编排。
         </p>
@@ -86,9 +87,9 @@ function syncRouteWithAuth(): void {
       </nav>
 
       <div class="sidebar-status">
-        <StatusPill :label="platform.status.phase" :tone="statusTone" />
+        <StatusPill :label="translateDriverPhase(platform.status.phase)" :tone="statusTone" />
         <span class="sidebar-ws">
-          {{ platform.authSession.isAuthenticated ? `User: ${platform.authSession.username}` : "Guest" }} / WS: {{ platform.wsState }}
+          {{ platform.authSession.isAuthenticated ? `用户：${platform.authSession.username}` : "访客" }} / WebSocket：{{ translateWsState(platform.wsState) }}
         </span>
       </div>
 
@@ -98,16 +99,16 @@ function syncRouteWithAuth(): void {
     <main class="shell-main">
       <section class="hero-panel">
         <div>
-          <p class="hero-kicker">Factory-grade test surface</p>
+          <p class="hero-kicker">工厂级测试台面</p>
           <h2>树莓派上的 Z-Wave 测试控制台</h2>
           <p class="hero-copy">
             以单实例 Driver、单任务测试引擎和稳定串口路径为基础，符合架构文档约束。
           </p>
         </div>
         <div class="hero-metrics">
-          <MetricCard eyebrow="Driver" title="Runtime" :value="platform.status.phase" :note="platform.status.connectedPortPath || '未连接串口'" />
-          <MetricCard eyebrow="Inventory" title="Nodes" :value="String(platform.nodes.length)" note="来自服务端节点快照" />
-          <MetricCard eyebrow="Runner" title="Latest Run" :value="platform.latestRun?.status || 'idle'" :note="platform.latestRun?.id || '暂无测试记录'" />
+          <MetricCard eyebrow="驱动" title="运行状态" :value="translateDriverPhase(platform.status.phase)" :note="platform.status.connectedPortPath || '未连接串口'" />
+          <MetricCard eyebrow="清单" title="节点数量" :value="String(platform.nodes.length)" note="来自服务端节点快照" />
+          <MetricCard eyebrow="执行器" title="最近任务" :value="translateRunStatus(platform.latestRun?.status || 'idle')" :note="platform.latestRun?.id || '暂无测试记录'" />
         </div>
       </section>
 

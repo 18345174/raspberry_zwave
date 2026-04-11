@@ -2,6 +2,7 @@
 import { ref } from "vue";
 
 import { usePlatformStore } from "../stores/platform";
+import { translatePingResult } from "../utils/ui-text";
 
 const platform = usePlatformStore();
 const pingResult = ref<string>("");
@@ -15,7 +16,7 @@ async function ping(): Promise<void> {
   if (!platform.selectedNode) {
     return;
   }
-  pingResult.value = (await platform.pingNode(platform.selectedNode.nodeId)) ? "reachable" : "unreachable";
+  pingResult.value = translatePingResult(await platform.pingNode(platform.selectedNode.nodeId));
 }
 
 async function heal(): Promise<void> {
@@ -32,7 +33,7 @@ async function heal(): Promise<void> {
     <section class="page-card">
       <div class="section-heading">
         <div>
-          <p class="section-kicker">Inventory</p>
+          <p class="section-kicker">设备清单</p>
           <h3>节点列表</h3>
         </div>
         <button class="ghost-button" @click="platform.refreshNodes">刷新</button>
@@ -41,10 +42,10 @@ async function heal(): Promise<void> {
       <div class="list-column">
         <button v-for="node in platform.nodes" :key="node.nodeId" class="list-card" @click="openNode(node.nodeId)">
           <div>
-            <strong>#{{ node.nodeId }} {{ node.product || node.name || 'Unnamed node' }}</strong>
-            <p>{{ node.manufacturer || 'Unknown manufacturer' }}</p>
+            <strong>#{{ node.nodeId }} {{ node.product || node.name || '未命名节点' }}</strong>
+            <p>{{ node.manufacturer || '未知厂商' }}</p>
           </div>
-          <span>{{ node.status || node.interviewStage || 'unknown' }}</span>
+          <span>{{ node.status || node.interviewStage || '未知状态' }}</span>
         </button>
       </div>
     </section>
@@ -52,7 +53,7 @@ async function heal(): Promise<void> {
     <section class="page-card accent-card">
       <div class="section-heading">
         <div>
-          <p class="section-kicker">Snapshot</p>
+          <p class="section-kicker">快照</p>
           <h3>节点详情</h3>
         </div>
       </div>
@@ -68,32 +69,32 @@ async function heal(): Promise<void> {
             <dd>{{ platform.selectedNode.securityClasses.join(', ') || '-' }}</dd>
           </div>
           <div>
-            <dt>Command Classes</dt>
+            <dt>命令类</dt>
             <dd>{{ platform.selectedNode.commandClasses.join(', ') || '-' }}</dd>
           </div>
           <div>
-            <dt>Endpoints</dt>
+            <dt>端点</dt>
             <dd>{{ platform.selectedNode.endpoints.map((item) => item.index).join(', ') || '0' }}</dd>
           </div>
         </dl>
 
         <div class="button-row">
-          <button class="primary-button" @click="ping">Ping</button>
-          <button class="ghost-button" @click="heal">Health Check</button>
+          <button class="primary-button" @click="ping">连通性检查</button>
+          <button class="ghost-button" @click="heal">健康检查</button>
           <button class="ghost-button" @click="platform.selectNode(platform.selectedNode.nodeId)">刷新详情</button>
         </div>
 
-        <p v-if="pingResult" class="mono-line">Ping: {{ pingResult }}</p>
+        <p v-if="pingResult" class="mono-line">连通性：{{ pingResult }}</p>
         <pre v-if="healthResult" class="code-block">{{ healthResult }}</pre>
 
         <div class="value-table-wrap">
           <table class="value-table">
             <thead>
               <tr>
-                <th>Endpoint</th>
-                <th>CC</th>
-                <th>Property</th>
-                <th>Value</th>
+                <th>端点</th>
+                <th>命令类</th>
+                <th>属性</th>
+                <th>值</th>
               </tr>
             </thead>
             <tbody>
