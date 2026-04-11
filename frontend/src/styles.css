@@ -142,8 +142,8 @@ pre,
   padding: 20px 28px 28px;
   display: grid;
   gap: 14px;
-  align-content: start;
-  grid-auto-rows: max-content;
+  grid-template-rows: max-content minmax(0, 1fr);
+  min-height: 0;
 }
 
 .page-header,
@@ -169,6 +169,7 @@ pre,
   min-height: 0;
   display: flex;
   align-items: center;
+  border-radius: 0;
 }
 
 .page-header h2 {
@@ -221,12 +222,16 @@ pre,
 
 .content-panel {
   padding: 20px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .page-grid {
   display: grid;
   gap: 20px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .page-grid.page-grid-single {
