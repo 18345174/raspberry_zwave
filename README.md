@@ -52,23 +52,30 @@
 - `AUTH_SESSION_TTL_HOURS`：浏览器登录会话有效期
 - 前端浏览器可在 `Login` 页面登录，也可在 `System` 页面保存 token 到本地 `localStorage`
 
-## 部署脚本
+## 脚本入口
 
-- `deploy/scripts/one-click-deploy-rpi.sh`：树莓派 Ubuntu 一键部署；默认登录密码 `123456`
-- `deploy/scripts/restart-platform.sh`：重启平台；会先检查端口占用，发现占用后执行 `kill -9`
-- `deploy/scripts/tail-logs.sh`：实时查看后端服务日志，支持 `backend` / `controller` / `zwave` / `errors` / `all`
-- `deploy/scripts/prepare-ubuntu.sh`：安装 Ubuntu 依赖与 Node.js LTS
-- `deploy/scripts/bootstrap-env.sh`：从样例生成 `backend/.env`
-- `deploy/scripts/install.sh`：同步代码、安装依赖、构建并注册 systemd
-- `backend/scripts/generate-password-hash.mjs`：生成 `ADMIN_PASSWORD_HASH`
+- 统一入口：`deploy/scripts/platform.sh`
+- 兼容旧入口：
+  - `deploy/scripts/one-click-deploy-rpi.sh` -> 等价于 `bash deploy/scripts/platform.sh deploy`
+  - `deploy/scripts/install.sh` -> 等价于 `bash deploy/scripts/platform.sh install`
+  - `deploy/scripts/restart-platform.sh` -> 等价于 `bash deploy/scripts/platform.sh restart`
+- 其他辅助脚本：
+  - `deploy/scripts/tail-logs.sh`：实时查看后端服务日志，支持 `backend` / `controller` / `zwave` / `errors` / `all`
+  - `deploy/scripts/prepare-ubuntu.sh`：安装 Ubuntu 依赖与 Node.js LTS
+  - `deploy/scripts/bootstrap-env.sh`：从样例生成 `backend/.env`
+  - `backend/scripts/generate-password-hash.mjs`：生成 `ADMIN_PASSWORD_HASH`
 
-## 重启脚本
+## platform.sh 用法
 
-- 首次安装用：`bash deploy/scripts/one-click-deploy-rpi.sh`
-- 日常重启用：`bash deploy/scripts/restart-platform.sh`
-- 脚本会先检查后端端口和前端端口是否被占用；若被占用会执行 `kill -9`
-- 默认后端端口读取 `backend/.env` 里的 `PORT`，默认前端端口为 `5173`
-- 如有单独前端 systemd 服务，可额外传入：`FRONTEND_SERVICE_NAME=<your-frontend.service> bash deploy/scripts/restart-platform.sh`
+- 查看帮助：`bash deploy/scripts/platform.sh help`
+- 首次部署：`bash deploy/scripts/platform.sh deploy`
+- 更新部署目录并重装构建：`bash deploy/scripts/platform.sh install`
+- 检查端口占用并重启服务：`bash deploy/scripts/platform.sh restart`
+- `deploy`：适合树莓派首次安装；会安装 Ubuntu 依赖、写入 `backend/.env`、授权 `dialout`、再执行安装构建
+- `install`：适合 `git pull` 后重新同步到 `/opt/zwave-test-platform`，并重新 `npm install` / `npm run build`
+- `restart`：适合日常维护；会先检查后端/前端端口，发现占用后执行 `kill -9`，再重启 service
+- 默认后端端口来自 `backend/.env` 的 `PORT`；前端检查端口默认是 `5173`
+- 如果你有独立前端 systemd 服务，可这样用：`FRONTEND_SERVICE_NAME=<your-frontend.service> bash deploy/scripts/platform.sh restart`
 
 ## 日志查看
 
@@ -78,4 +85,5 @@
 - 仅查看错误相关日志：`bash deploy/scripts/tail-logs.sh errors`
 - 实时查看全部服务日志：`bash deploy/scripts/tail-logs.sh all`
 - 这些都是直接跟随 `journalctl -f` 的实时输出，不是写入单独日志文件
+- `controller` 模式只跟随后续新增日志，不会先打印历史日志
 - 如当前用户没有 journal 权限，脚本会自动尝试走 `sudo journalctl`
