@@ -41,7 +41,7 @@ async function submitChallenge(): Promise<void> {
       <div class="section-heading">
         <div>
           <p class="section-kicker">安全引导</p>
-          <h3>设备添加 / 移除流程</h3>
+          <h3>添加 / 删除设备</h3>
         </div>
       </div>
 

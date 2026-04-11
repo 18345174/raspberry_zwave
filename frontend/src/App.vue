@@ -12,7 +12,7 @@ const router = useRouter();
 
 const navItems = [
   { to: "/controller", label: "控制器" },
-  { to: "/inclusion", label: "入排网" },
+  { to: "/inclusion", label: "添加/删除设备" },
   { to: "/nodes", label: "节点" },
   { to: "/tests", label: "测试" },
   { to: "/system", label: "系统" },
