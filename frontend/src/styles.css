@@ -69,7 +69,7 @@ pre,
 .shell-sidebar {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 22px;
   padding: 28px;
   background:
     linear-gradient(180deg, rgba(44, 24, 96, 0.96), rgba(73, 34, 154, 0.92)),
@@ -78,7 +78,6 @@ pre,
   backdrop-filter: blur(24px);
 }
 
-.sidebar-kicker,
 .hero-kicker,
 .section-kicker,
 .metric-eyebrow {
@@ -89,8 +88,6 @@ pre,
   color: var(--muted);
 }
 
-.sidebar-kicker,
-.sidebar-copy,
 .sidebar-ws {
   color: rgba(244, 235, 255, 0.72);
 }
@@ -103,14 +100,15 @@ pre,
   line-height: 1.05;
 }
 
-.sidebar-copy {
-  margin-top: 14px;
-  line-height: 1.6;
+.sidebar-title {
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(244, 235, 255, 0.12);
 }
 
 .sidebar-nav {
   display: grid;
   gap: 10px;
+  margin-bottom: auto;
 }
 
 .sidebar-link {

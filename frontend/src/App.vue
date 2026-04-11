@@ -66,13 +66,7 @@ function syncRouteWithAuth(): void {
 
   <div v-else class="shell">
     <aside class="shell-sidebar">
-      <div>
-        <p class="sidebar-kicker">Raspberry Pi 4B / Ubuntu</p>
-        <h1>Z-Wave 测试平台</h1>
-        <p class="sidebar-copy">
-          后端直连 <code>zwave-js</code>，浏览器仅通过 HTTP + WebSocket 展示与编排。
-        </p>
-      </div>
+      <h1 class="sidebar-title">Z-Wave 测试平台</h1>
 
       <nav class="sidebar-nav">
         <RouterLink
