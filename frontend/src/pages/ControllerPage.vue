@@ -36,7 +36,7 @@ async function handleSave(): Promise<void> {
 </script>
 
 <template>
-  <div class="page-grid">
+  <div class="page-grid page-grid-single">
     <section class="page-card accent-card">
       <div class="section-heading">
         <div>
