@@ -26,6 +26,7 @@ const emptyStatus = (): DriverStatus => ({
 
 const PROVISIONING_SETTLE_POLLS = 20;
 const INCLUSION_DISCOVERY_GRACE_MS = 5000;
+const INCLUSION_INTERVIEW_WAIT_MS = 3 * 60 * 1000;
 
 export const usePlatformStore = defineStore("platform", () => {
   const authSession = ref<AuthSessionView>({
@@ -118,8 +119,50 @@ export const usePlatformStore = defineStore("platform", () => {
     return Date.now() - Date.parse(foundIncludedNode.value.timestamp) < INCLUSION_DISCOVERY_GRACE_MS;
   }
 
+  function findNewlyIncludedNode(): NodeSummary | null {
+    const baselineIds = new Set(provisioningBaselineNodeIds.value);
+    const addedNodes = nodes.value.filter((item) => !baselineIds.has(item.nodeId));
+    if (addedNodes.length === 0) {
+      return null;
+    }
+    return [...addedNodes].sort((left, right) => right.nodeId - left.nodeId)[0] ?? null;
+  }
+
+  function rememberPendingIncludedNode(node: Pick<NodeSummary, "nodeId" | "name" | "product">): void {
+    if (pendingIncludedNode.value?.nodeId === node.nodeId) {
+      return;
+    }
+    pendingIncludedNode.value = {
+      nodeId: node.nodeId,
+      name: node.name ?? node.product,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  function isPendingIncludedNodeStillInitializing(): boolean {
+    if (!pendingIncludedNode.value) {
+      return false;
+    }
+
+    const joinedNode = nodes.value.find((item) => item.nodeId === pendingIncludedNode.value?.nodeId);
+    if (!joinedNode) {
+      return false;
+    }
+
+    if (isInterviewComplete(joinedNode)) {
+      return false;
+    }
+
+    return Date.now() - Date.parse(pendingIncludedNode.value.timestamp) < INCLUSION_INTERVIEW_WAIT_MS;
+  }
+
   function inferProvisioningResultFromNodes(): void {
     if (provisioningMode.value === "include") {
+      const newlyIncludedNode = findNewlyIncludedNode();
+      if (!pendingIncludedNode.value && newlyIncludedNode) {
+        rememberPendingIncludedNode(newlyIncludedNode);
+      }
+
       // Never treat mere node appearance as success. Secure devices may emit
       // `node added` before the S2 challenge arrives, so wait for interview/ready.
       if (inclusionChallenge.value || isWithinInclusionDiscoveryGrace()) {
@@ -166,6 +209,11 @@ export const usePlatformStore = defineStore("platform", () => {
       inclusionChallenge.value != null;
 
     if (isControllerStillBusy) {
+      provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
+      return;
+    }
+
+    if (provisioningMode.value === "include" && isPendingIncludedNodeStillInitializing()) {
       provisioningSettlePollsRemaining.value = PROVISIONING_SETTLE_POLLS;
       return;
     }
