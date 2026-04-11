@@ -44,6 +44,7 @@ export const usePlatformStore = defineStore("platform", () => {
   const wsState = ref<"idle" | "connecting" | "open" | "closed">("idle");
   const errorMessage = ref("");
   let socket: WebSocket | null = null;
+  let statusPollTimer: number | null = null;
 
   function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -62,6 +63,7 @@ export const usePlatformStore = defineStore("platform", () => {
         runs.value = [];
         runLogs.value = {};
         selectedNode.value = null;
+        stopStatusPolling();
         connectWebSocket(false);
         return;
       }
@@ -77,7 +79,7 @@ export const usePlatformStore = defineStore("platform", () => {
       ]);
 
       health.value = healthResult;
-      status.value = statusResult;
+      applyStatus(statusResult);
       ports.value = portResult.items;
       nodes.value = nodeResult.items;
       definitions.value = definitionResult.items;
@@ -147,7 +149,55 @@ export const usePlatformStore = defineStore("platform", () => {
     runs.value = [];
     runLogs.value = {};
     selectedNode.value = null;
+    stopStatusPolling();
     connectWebSocket(false);
+  }
+
+  function applyStatus(nextStatus: DriverStatus): void {
+    const previousReady = status.value.hasReadyDriver;
+    status.value = nextStatus;
+
+    if (!previousReady && nextStatus.hasReadyDriver) {
+      void refreshNodes();
+    }
+
+    if (nextStatus.phase === "connecting") {
+      startStatusPolling();
+    } else {
+      stopStatusPolling();
+    }
+  }
+
+  function startStatusPolling(): void {
+    if (statusPollTimer != null) {
+      return;
+    }
+
+    const poll = async () => {
+      try {
+        const latestStatus = await apiClient.getStatus();
+        applyStatus(latestStatus);
+      } catch {
+        // Ignore transient polling failures while the websocket remains the primary source of truth.
+      }
+
+      if (status.value.phase === "connecting") {
+        statusPollTimer = window.setTimeout(poll, 1500);
+        return;
+      }
+
+      statusPollTimer = null;
+    };
+
+    statusPollTimer = window.setTimeout(poll, 1500);
+  }
+
+  function stopStatusPolling(): void {
+    if (statusPollTimer == null) {
+      return;
+    }
+    window.clearTimeout(statusPollTimer);
+    statusPollTimer = null;
   }
 
   function pushNotification(title: string, body: string): void {
@@ -166,11 +216,7 @@ export const usePlatformStore = defineStore("platform", () => {
     }
 
     if (event.type === "zwave.status.changed") {
-      const previousReady = status.value.hasReadyDriver;
-      status.value = event.payload as DriverStatus;
-      if (!previousReady && status.value.hasReadyDriver) {
-        void refreshNodes();
-      }
+      applyStatus(event.payload as DriverStatus);
       return;
     }
 
@@ -215,8 +261,9 @@ export const usePlatformStore = defineStore("platform", () => {
 
   async function connectDriver(): Promise<void> {
     await runAction("连接失败", async () => {
-      status.value = await apiClient.connect();
-      if (status.value.hasReadyDriver) {
+      const latestStatus = await apiClient.connect();
+      applyStatus(latestStatus);
+      if (latestStatus.hasReadyDriver) {
         await refreshNodes();
       }
     });
@@ -224,14 +271,15 @@ export const usePlatformStore = defineStore("platform", () => {
 
   async function disconnectDriver(): Promise<void> {
     await runAction("断开失败", async () => {
-      status.value = await apiClient.disconnect();
+      applyStatus(await apiClient.disconnect());
     });
   }
 
   async function reconnectDriver(): Promise<void> {
     await runAction("重连失败", async () => {
-      status.value = await apiClient.reconnect();
-      if (status.value.hasReadyDriver) {
+      const latestStatus = await apiClient.reconnect();
+      applyStatus(latestStatus);
+      if (latestStatus.hasReadyDriver) {
         await refreshNodes();
       }
     });
