@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { CommandClasses, SecurityClass, getCCName } from "@zwave-js/core";
 
 import type { AppConfig } from "../../domain/config.js";
 import type {
@@ -37,7 +38,6 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private readonly serialDiscovery = new SerialDiscoveryService();
   private readonly emitter = new EventEmitter();
   private readonly pendingInclusionRequests = new Map<string, PendingRequest>();
-  private readonly commandClassNames = new Map<number, string>();
   private readonly status: DriverStatus = {
     phase: "idle",
     isInclusionActive: false,
@@ -171,10 +171,9 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     if (!pending || pending.type !== "grant_security_classes") {
       throw new Error(`Unknown security grant request: ${requestId}`);
     }
-    const zwave = await this.loadModule();
     this.pendingInclusionRequests.delete(requestId);
     pending.resolve({
-      securityClasses: payload.grant.map((name) => zwave.SecurityClass[name]),
+      securityClasses: payload.grant.map((name) => SecurityClass[name]),
       clientSideAuth: payload.clientSideAuth,
     });
   }
@@ -241,7 +240,6 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   public async invokeCcApi(input: InvokeCcApiInput): Promise<unknown> {
     this.ensureDriverReady();
-    const zwave = await this.loadModule();
     const node = this.driver.controller.nodes.get(input.nodeId);
     if (!node) {
       throw new Error(`Node ${input.nodeId} not found.`);
@@ -249,8 +247,8 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const endpoint = node.getEndpoint(input.endpoint ?? 0) ?? node;
     const cc = typeof input.commandClass === "number"
       ? input.commandClass
-      : zwave.CommandClasses[input.commandClass as keyof typeof zwave.CommandClasses];
-    if (!cc) {
+      : CommandClasses[input.commandClass as keyof typeof CommandClasses];
+    if (cc == undefined) {
       throw new Error(`Unknown command class: ${String(input.commandClass)}`);
     }
     return endpoint.invokeCCAPI(cc, input.method, ...(input.args ?? []));
@@ -258,17 +256,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   private async loadModule(): Promise<ZwaveModule> {
     this.modulePromise ??= import("zwave-js");
-    const module = await this.modulePromise;
-
-    if (this.commandClassNames.size === 0) {
-      for (const [name, value] of Object.entries(module.CommandClasses)) {
-        if (typeof value === "number") {
-          this.commandClassNames.set(value, name);
-        }
-      }
-    }
-
-    return module;
+    return this.modulePromise;
   }
 
   private createDriverOptions(): Record<string, unknown> {
@@ -306,7 +294,8 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
           this.pendingInclusionRequests.set(requestId, { type: "grant_security_classes", resolve });
         });
       },
-      validateDSKAndEnterPIN: async (dsk: string) => {
+      validateDSKAndEnterPIN: async (...args: unknown[]) => {
+        const dsk = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
         const requestId = createId("inc_req");
         this.publish({
           type: "zwave.inclusion.challenge",
@@ -453,8 +442,8 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       .map((endpoint: any) => ({
         index: endpoint.index ?? 0,
         label: endpoint.endpointLabel,
-        commandClasses: Array.from(endpoint.implementedCommandClasses?.keys?.() ?? []).map((ccId: number) =>
-          this.getCommandClassName(ccId),
+        commandClasses: Array.from(endpoint.implementedCommandClasses?.keys?.() ?? []).map((ccId) =>
+          this.getCommandClassName(Number(ccId)),
         ),
       }));
   }
@@ -504,17 +493,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   }
 
   private getCommandClassName(commandClass: number): string {
-    return this.commandClassNames.get(commandClass) ?? `CC_${commandClass}`;
+    return CommandClasses[commandClass] ?? getCCName(commandClass) ?? `CC_${commandClass}`;
   }
 
   private getSecurityClassName(securityClass: number): string {
-    const map: Record<number, string> = {
-      0: "S2_Unauthenticated",
-      1: "S2_Authenticated",
-      2: "S2_AccessControl",
-      7: "S0_Legacy",
-    };
-    return map[securityClass] ?? String(securityClass);
+    return SecurityClass[securityClass] ?? String(securityClass);
   }
 
   private updateStatus(partial: Partial<DriverStatus>): void {

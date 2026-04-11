@@ -128,7 +128,9 @@ export async function createApp(config: AppConfig) {
       return;
     }
 
-    reply.code(500).send({ message: error.message });
+    reply.code(500).send({
+      message: error instanceof Error ? error.message : "Internal server error.",
+    });
   });
 
   app.addHook("onClose", async () => {

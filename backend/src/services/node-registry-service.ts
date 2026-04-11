@@ -46,7 +46,7 @@ export class NodeRegistryService {
   public async handleEvent(event: ZwaveEvent): Promise<void> {
     if (event.type === "zwave.node.added" || event.type === "zwave.node.updated") {
       const payload = event.payload as { node?: NodeDetail } | NodeDetail;
-      const node = "node" in payload ? payload.node : payload;
+      const node = this.extractNodeDetail(payload);
       if (node) {
         this.storage.upsertNodeSnapshot(node);
       }
@@ -70,5 +70,12 @@ export class NodeRegistryService {
         }
       }
     }
+  }
+
+  private extractNodeDetail(payload: { node?: NodeDetail } | NodeDetail): NodeDetail | undefined {
+    if ("nodeId" in payload) {
+      return payload;
+    }
+    return payload.node;
   }
 }
