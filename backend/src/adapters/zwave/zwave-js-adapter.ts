@@ -155,41 +155,75 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   public async startInclusion(): Promise<void> {
     this.ensureDriverReady();
     const zwave = await this.loadModule();
+    this.log("info", "Starting inclusion mode", {
+      strategy: "Default",
+      connectedPortPath: this.status.connectedPortPath,
+    });
     const started = await this.driver.controller.beginInclusion({
       strategy: zwave.InclusionStrategy.Default,
       userCallbacks: this.createInclusionCallbacks(),
     });
     if (!started) {
+      this.log("warn", "Inclusion did not start", {
+        connectedPortPath: this.status.connectedPortPath,
+        reason: "already_active_or_rejected",
+      });
       throw new Error("Failed to start inclusion or inclusion is already active.");
     }
     this.updateStatus({ isInclusionActive: true, isExclusionActive: false });
+    this.log("info", "Inclusion mode active", {
+      connectedPortPath: this.status.connectedPortPath,
+    });
     this.publish({ type: "zwave.inclusion.started", payload: { portPath: this.status.connectedPortPath } });
   }
 
   public async stopInclusion(): Promise<void> {
     this.ensureDriverReady();
+    this.log("info", "Stopping inclusion mode", {
+      connectedPortPath: this.status.connectedPortPath,
+    });
     await this.driver.controller.stopInclusion();
     this.updateStatus({ isInclusionActive: false });
+    this.log("info", "Inclusion mode stopped", {
+      connectedPortPath: this.status.connectedPortPath,
+    });
     this.publish({ type: "zwave.inclusion.stopped", payload: {} });
   }
 
   public async startExclusion(): Promise<void> {
     this.ensureDriverReady();
     const zwave = await this.loadModule();
+    this.log("info", "Starting exclusion mode", {
+      strategy: "ExcludeOnly",
+      connectedPortPath: this.status.connectedPortPath,
+    });
     const started = await this.driver.controller.beginExclusion({
       strategy: zwave.ExclusionStrategy.ExcludeOnly,
     });
     if (!started) {
+      this.log("warn", "Exclusion did not start", {
+        connectedPortPath: this.status.connectedPortPath,
+        reason: "already_active_or_rejected",
+      });
       throw new Error("Failed to start exclusion or exclusion is already active.");
     }
     this.updateStatus({ isExclusionActive: true, isInclusionActive: false });
+    this.log("info", "Exclusion mode active", {
+      connectedPortPath: this.status.connectedPortPath,
+    });
     this.publish({ type: "zwave.exclusion.started", payload: {} });
   }
 
   public async stopExclusion(): Promise<void> {
     this.ensureDriverReady();
+    this.log("info", "Stopping exclusion mode", {
+      connectedPortPath: this.status.connectedPortPath,
+    });
     await this.driver.controller.stopExclusion();
     this.updateStatus({ isExclusionActive: false });
+    this.log("info", "Exclusion mode stopped", {
+      connectedPortPath: this.status.connectedPortPath,
+    });
     this.publish({ type: "zwave.exclusion.stopped", payload: {} });
   }
 
@@ -199,6 +233,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Unknown security grant request: ${requestId}`);
     }
     this.pendingInclusionRequests.delete(requestId);
+    this.log("info", "Submitting granted security classes", {
+      requestId,
+      securityClasses: payload.grant,
+      clientSideAuth: payload.clientSideAuth,
+    });
     pending.resolve({
       securityClasses: payload.grant.map((name) => SecurityClass[name]),
       clientSideAuth: payload.clientSideAuth,
@@ -211,6 +250,10 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Unknown DSK validation request: ${requestId}`);
     }
     this.pendingInclusionRequests.delete(requestId);
+    this.log("info", "Submitting DSK PIN for inclusion", {
+      requestId,
+      pinLength: pin.length,
+    });
     pending.resolve(pin);
   }
 
@@ -308,6 +351,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return {
       grantSecurityClasses: async (requested: any) => {
         const requestId = createId("inc_req");
+        this.log("info", "Received security class grant challenge", {
+          requestId,
+          requestedSecurityClasses: requested.securityClasses.map((item: number) => this.getSecurityClassName(item)),
+          clientSideAuth: requested.clientSideAuth,
+        });
         this.publish({
           type: "zwave.inclusion.challenge",
           payload: {
@@ -324,6 +372,10 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       validateDSKAndEnterPIN: async (...args: unknown[]) => {
         const dsk = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
         const requestId = createId("inc_req");
+        this.log("info", "Received DSK validation challenge", {
+          requestId,
+          dsk,
+        });
         this.publish({
           type: "zwave.inclusion.challenge",
           payload: {
@@ -337,6 +389,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         });
       },
       abort: () => {
+        this.log("warn", "Inclusion challenge flow aborted by controller");
         this.pendingInclusionRequests.clear();
         this.publish({ type: "zwave.inclusion.challenge.aborted", payload: {} });
       },
@@ -385,6 +438,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("ready", (node: any) => {
+      this.log("info", "Node interview ready", {
+        nodeId: node.id,
+        interviewStage: node.interviewStage != undefined ? String(node.interviewStage) : undefined,
+        status: node.status != undefined ? String(node.status) : undefined,
+      });
       this.publish({ type: "zwave.node.updated", payload: this.toNodeDetail(node) });
     });
 
@@ -405,15 +463,24 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       this.publish({ type: "zwave.node.removed", payload: { nodeId: node.id, reason } });
     });
 
-    const forwardValueEvent = (type: string) => (node: any, args: any) => {
+    const forwardValueEvent = (type: string, message: string) => (node: any, args: any) => {
+      this.log("info", message, {
+        nodeId: node.id,
+        ...this.summarizeValueArgs(args),
+      });
       this.publish({ type, payload: { nodeId: node.id, ...args } });
     };
 
-    driver.on("value added", forwardValueEvent("zwave.value.updated"));
-    driver.on("value updated", forwardValueEvent("zwave.value.updated"));
-    driver.on("value removed", forwardValueEvent("zwave.value.updated"));
-    driver.on("metadata updated", forwardValueEvent("zwave.value.updated"));
+    driver.on("value added", forwardValueEvent("zwave.value.updated", "Value added"));
+    driver.on("value updated", forwardValueEvent("zwave.value.updated", "Value updated"));
+    driver.on("value removed", forwardValueEvent("zwave.value.updated", "Value removed"));
+    driver.on("metadata updated", forwardValueEvent("zwave.value.updated", "Metadata updated"));
     driver.on("notification", (node: any, ccId: number, args: unknown) => {
+      this.log("info", "Notification received", {
+        nodeId: node.id,
+        commandClass: this.getCommandClassName(ccId),
+        args: this.summarizeUnknown(args),
+      });
       this.publish({
         type: "zwave.driver.log",
         payload: {
@@ -436,11 +503,13 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const controller = driver.controller;
     controller.on?.("inclusion stopped", () => {
       this.updateStatus({ isInclusionActive: false });
+      this.log("info", "Controller reported inclusion stopped");
       this.publish({ type: "zwave.inclusion.stopped", payload: {} });
     });
 
     controller.on?.("exclusion stopped", () => {
       this.updateStatus({ isExclusionActive: false });
+      this.log("info", "Controller reported exclusion stopped");
       this.publish({ type: "zwave.exclusion.stopped", payload: {} });
     });
 
@@ -553,6 +622,37 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   private getSecurityClassName(securityClass: number): string {
     return SecurityClass[securityClass] ?? String(securityClass);
+  }
+
+  private summarizeValueArgs(args: any): Record<string, unknown> {
+    if (!args || typeof args !== "object") {
+      return { payload: this.summarizeUnknown(args) };
+    }
+
+    return {
+      commandClass: args.commandClass != undefined ? this.getCommandClassName(Number(args.commandClass)) : undefined,
+      endpoint: args.endpoint ?? 0,
+      property: args.property != undefined ? String(args.property) : undefined,
+      propertyKey: args.propertyKey != undefined ? String(args.propertyKey) : undefined,
+      newValue: "newValue" in args ? this.summarizeUnknown(args.newValue) : undefined,
+      prevValue: "prevValue" in args ? this.summarizeUnknown(args.prevValue) : undefined,
+      internal: "internal" in args ? Boolean(args.internal) : undefined,
+    };
+  }
+
+  private summarizeUnknown(input: unknown): unknown {
+    if (input == undefined || typeof input === "number" || typeof input === "boolean") {
+      return input;
+    }
+    if (typeof input === "string") {
+      return input.length > 160 ? `${input.slice(0, 157)}...` : input;
+    }
+    try {
+      const json = JSON.stringify(input);
+      return json.length > 240 ? `${json.slice(0, 237)}...` : JSON.parse(json);
+    } catch {
+      return String(input);
+    }
   }
 
   private updateStatus(partial: Partial<DriverStatus>): void {
