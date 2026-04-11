@@ -1,5 +1,6 @@
 import { config as loadDotEnv } from "dotenv";
-import { mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,12 +63,54 @@ function ensureDirectory(dirPath: string): string {
   return dirPath;
 }
 
+function loadPersistedSecurityKeys(dataDir: string): Partial<Record<SecurityKeyName, string>> {
+  const filePath = path.join(dataDir, "zwave-security-keys.json");
+  if (!existsSync(filePath)) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8")) as Partial<Record<SecurityKeyName, string>>;
+  } catch {
+    return {};
+  }
+}
+
+function resolveSecurityKeys(dataDir: string): Partial<Record<SecurityKeyName, string>> {
+  const persisted = loadPersistedSecurityKeys(dataDir);
+  const resolved: Partial<Record<SecurityKeyName, string>> = {
+    S0_Legacy: optional("ZWAVE_KEY_S0_LEGACY") ?? persisted.S0_Legacy,
+    S2_Unauthenticated: optional("ZWAVE_KEY_S2_UNAUTHENTICATED") ?? persisted.S2_Unauthenticated,
+    S2_Authenticated: optional("ZWAVE_KEY_S2_AUTHENTICATED") ?? persisted.S2_Authenticated,
+    S2_AccessControl: optional("ZWAVE_KEY_S2_ACCESS_CONTROL") ?? persisted.S2_AccessControl,
+  };
+
+  let generated = false;
+  for (const key of ["S0_Legacy", "S2_Unauthenticated", "S2_Authenticated", "S2_AccessControl"] as SecurityKeyName[]) {
+    if (!resolved[key]) {
+      resolved[key] = randomBytes(16).toString("hex");
+      generated = true;
+    }
+  }
+
+  if (generated || JSON.stringify(resolved) !== JSON.stringify(persisted)) {
+    const filePath = path.join(dataDir, "zwave-security-keys.json");
+    writeFileSync(filePath, JSON.stringify(resolved, null, 2));
+    if (generated) {
+      console.info(`[config] Generated persistent Z-Wave security keys at ${filePath}`);
+    }
+  }
+
+  return resolved;
+}
+
 export function loadAppConfig(): AppConfig {
   const dataDir = ensureDirectory(env("DATA_DIR", path.resolve(process.cwd(), "data")));
   const logDir = ensureDirectory(env("LOG_DIR", path.join(dataDir, "logs")));
   const zwaveCacheDir = ensureDirectory(
     env("ZWAVE_CACHE_DIR", path.join(dataDir, "zwave")),
   );
+  const securityKeys = resolveSecurityKeys(dataDir);
 
   return {
     host: env("HOST", "0.0.0.0"),
@@ -78,12 +121,7 @@ export function loadAppConfig(): AppConfig {
     zwaveDeviceConfigDir: optional("ZWAVE_DEVICE_CONFIG_DIR"),
     debugApiEnabled: booleanEnv("DEBUG_API_ENABLED", false),
     apiToken: optional("API_TOKEN"),
-    securityKeys: {
-      S0_Legacy: optional("ZWAVE_KEY_S0_LEGACY"),
-      S2_Unauthenticated: optional("ZWAVE_KEY_S2_UNAUTHENTICATED"),
-      S2_Authenticated: optional("ZWAVE_KEY_S2_AUTHENTICATED"),
-      S2_AccessControl: optional("ZWAVE_KEY_S2_ACCESS_CONTROL"),
-    },
+    securityKeys,
     auth: {
       enabled: Boolean(optional("ADMIN_PASSWORD") || optional("ADMIN_PASSWORD_HASH")),
       username: env("ADMIN_USERNAME", "admin"),
