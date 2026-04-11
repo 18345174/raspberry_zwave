@@ -449,60 +449,20 @@ pre,
 }
 
 .auth-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 460px);
-  gap: 28px;
-  align-items: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: calc(100vh - 72px);
 }
 
-.auth-copy,
 .auth-card {
+  width: min(460px, 100%);
   border: 1px solid var(--line);
   border-radius: 32px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(22px);
-}
-
-.auth-copy {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 42px;
-  background:
-    radial-gradient(circle at top left, rgba(230, 197, 255, 0.4), transparent 34%),
-    linear-gradient(135deg, rgba(72, 33, 153, 0.96), rgba(126, 58, 214, 0.92) 58%, rgba(192, 84, 255, 0.78));
-  color: #fbf7ff;
-}
-
-.auth-copy .section-kicker,
-.auth-copy .hero-copy {
-  color: rgba(251, 247, 255, 0.82);
-}
-
-.auth-copy h2 {
-  margin: 0 0 18px;
-  font-size: clamp(2.4rem, 4vw, 4.6rem);
-  line-height: 0.95;
-}
-
-.auth-card {
-  align-self: center;
-  padding: 28px;
+  padding: 32px;
   background: linear-gradient(180deg, rgba(252, 249, 255, 0.96), rgba(240, 230, 255, 0.92));
-}
-
-.auth-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.auth-meta {
-  margin-top: 20px;
-  padding-top: 18px;
-  border-top: 1px solid rgba(92, 57, 181, 0.12);
 }
 
 .sidebar-logout {
@@ -510,6 +470,13 @@ pre,
   color: #f7f1ff;
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.16);
+}
+
+.auth-title {
+  margin: 0 0 24px;
+  text-align: center;
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  line-height: 1.15;
 }
 
 @media (max-width: 1024px) {
@@ -526,7 +493,6 @@ pre,
   }
 
   .hero-panel,
-  .auth-panel,
   .page-grid,
   .page-grid.split-wide {
     grid-template-columns: 1fr;
