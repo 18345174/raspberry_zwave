@@ -333,7 +333,19 @@ export const usePlatformStore = defineStore("platform", () => {
   async function startInclusion(): Promise<void> {
     resetProvisioningFlow();
     await runAction("启动入网失败", async () => {
-      await apiClient.startInclusion();
+      try {
+        await apiClient.startInclusion();
+      } catch (error) {
+        const message = getErrorMessage(error);
+        const latestStatus = await apiClient.getStatus();
+        applyStatus(latestStatus);
+        if (message.includes("already active") && latestStatus.isInclusionActive) {
+          return;
+        }
+        throw error;
+      }
+
+      applyStatus(await apiClient.getStatus());
     });
   }
 
@@ -346,7 +358,19 @@ export const usePlatformStore = defineStore("platform", () => {
   async function startExclusion(): Promise<void> {
     resetProvisioningFlow();
     await runAction("启动排除失败", async () => {
-      await apiClient.startExclusion();
+      try {
+        await apiClient.startExclusion();
+      } catch (error) {
+        const message = getErrorMessage(error);
+        const latestStatus = await apiClient.getStatus();
+        applyStatus(latestStatus);
+        if (message.includes("already active") && latestStatus.isExclusionActive) {
+          return;
+        }
+        throw error;
+      }
+
+      applyStatus(await apiClient.getStatus());
     });
   }
 
