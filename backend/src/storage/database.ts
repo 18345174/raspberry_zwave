@@ -209,6 +209,10 @@ export class DatabaseService {
     this.db.prepare("DELETE FROM node_snapshots WHERE node_id = ?").run(nodeId);
   }
 
+  public clearNodeSnapshots(): void {
+    this.db.prepare("DELETE FROM node_snapshots").run();
+  }
+
   public listNodeSnapshots(): NodeDetail[] {
     const rows = this.db
       .prepare("SELECT snapshot_json FROM node_snapshots ORDER BY node_id ASC")

@@ -37,6 +37,10 @@ export class NodeRegistryService {
     return this.storage.getNodeSnapshot(nodeId);
   }
 
+  public clearAll(): void {
+    this.storage.clearNodeSnapshots();
+  }
+
   public async refreshNode(nodeId: number): Promise<NodeDetail> {
     const node = await this.zwaveAdapter.refreshNode(nodeId);
     this.storage.upsertNodeSnapshot(node);

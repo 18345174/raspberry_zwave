@@ -235,6 +235,46 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.publish({ type: "zwave.exclusion.stopped", payload: {} });
   }
 
+  public async hardResetController(): Promise<void> {
+    this.ensureDriverReady();
+    this.log("warn", "[controller] Performing hard reset", {
+      connectedPortPath: this.status.connectedPortPath,
+      controllerId: this.status.controllerId,
+      homeId: this.status.homeId,
+    });
+    this.pendingInclusionRequests.clear();
+    this.inclusionChallenge = null;
+    this.publishedReadyNodeIds.clear();
+    this.controllerEventsAttached = false;
+    this.updateStatus({
+      phase: "connecting",
+      hasReadyDriver: false,
+      isInclusionActive: false,
+      isExclusionActive: false,
+      controllerId: undefined,
+      homeId: undefined,
+      lastError: undefined,
+    });
+
+    try {
+      await this.driver.hardReset();
+      this.log("warn", "[controller] Hard reset command accepted; waiting for reinitialization", {
+        connectedPortPath: this.status.connectedPortPath,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.log("error", "[controller] Hard reset failed", {
+        error: message,
+      });
+      this.updateStatus({
+        phase: this.driver?.ready ? "ready" : "error",
+        hasReadyDriver: Boolean(this.driver?.ready),
+        lastError: message,
+      });
+      throw error;
+    }
+  }
+
   public async grantSecurity(requestId: string, payload: SecurityGrantInput): Promise<void> {
     const pending = this.pendingInclusionRequests.get(requestId);
     if (!pending || pending.type !== "grant_security_classes") {

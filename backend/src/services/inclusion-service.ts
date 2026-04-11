@@ -20,6 +20,10 @@ export class InclusionService {
     await this.zwaveRuntime.stopExclusion();
   }
 
+  public async hardResetController(): Promise<void> {
+    await this.zwaveRuntime.hardResetController();
+  }
+
   public async getInclusionChallenge(): Promise<InclusionChallenge | null> {
     return this.zwaveRuntime.getInclusionChallenge();
   }

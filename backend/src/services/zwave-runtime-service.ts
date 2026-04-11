@@ -169,6 +169,19 @@ export class ZwaveRuntimeService {
     await this.adapter.stopExclusion();
   }
 
+  public async hardResetController(): Promise<DriverStatus> {
+    this.log("warn", "Hard reset controller requested", {
+      portPath: this.storage.getControllerSelection().selectedPortPath,
+    });
+    await this.adapter.hardResetController();
+    const status = this.withSelection(
+      await this.adapter.getStatus(),
+      this.storage.getControllerSelection().selectedPortPath,
+    );
+    this.storage.saveDriverStatus(status);
+    return status;
+  }
+
   public async grantSecurity(requestId: string, payload: SecurityGrantInput): Promise<void> {
     await this.adapter.grantSecurity(requestId, payload);
   }

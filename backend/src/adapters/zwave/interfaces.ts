@@ -21,6 +21,7 @@ export interface IZwaveAdapter {
   stopInclusion(): Promise<void>;
   startExclusion(): Promise<void>;
   stopExclusion(): Promise<void>;
+  hardResetController(): Promise<void>;
   grantSecurity(requestId: string, payload: SecurityGrantInput): Promise<void>;
   validateDsk(requestId: string, pin: string): Promise<void>;
   listNodes(): Promise<NodeSummary[]>;

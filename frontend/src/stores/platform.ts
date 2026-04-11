@@ -681,6 +681,16 @@ export const usePlatformStore = defineStore("platform", () => {
     });
   }
 
+  async function resetController(): Promise<void> {
+    await runAction("Reset 控制器失败", async () => {
+      resetProvisioningFlow();
+      const latestStatus = await apiClient.resetController();
+      nodes.value = [];
+      selectedNode.value = null;
+      applyStatus(latestStatus);
+    });
+  }
+
   async function submitGrantSecurity(payload: { requestId: string; grant: string[]; clientSideAuth: boolean }): Promise<void> {
     await apiClient.grantSecurity(payload);
     inclusionChallenge.value = null;
@@ -762,6 +772,7 @@ export const usePlatformStore = defineStore("platform", () => {
     stopInclusion,
     startExclusion,
     stopExclusion,
+    resetController,
     submitGrantSecurity,
     submitValidateDsk,
     resetProvisioningFlow,

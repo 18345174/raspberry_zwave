@@ -63,6 +63,13 @@ const canStartExclusion = computed(
     !platform.status.isInclusionActive &&
     !platform.status.isExclusionActive,
 );
+const canResetController = computed(
+  () =>
+    driverReady.value &&
+    platform.provisioningMode === "idle" &&
+    !platform.status.isInclusionActive &&
+    !platform.status.isExclusionActive,
+);
 
 const dialogOpen = computed(() => dialogMode.value !== "idle");
 
@@ -124,7 +131,7 @@ const dialogTitle = computed(() => {
       case "processing":
         return "正在添加设备";
       case "include-success":
-        return "设备已准备就绪";
+        return "添加成功";
       case "stopped":
         return "添加流程已停止";
       default:
@@ -207,6 +214,17 @@ async function beginExclusion(): Promise<void> {
   }
 }
 
+async function resetController(): Promise<void> {
+  const confirmed = window.confirm(
+    "这会执行与 Z-Wave PC Controller 类似的 Reset Controller / Hard Reset。\n\n控制器中的所有节点（包括在线和已死节点）都会被强制清空，原网络会被彻底删除。设备之后通常还需要先在设备侧恢复出厂，再重新入网。\n\n确定继续吗？",
+  );
+  if (!confirmed) {
+    return;
+  }
+  closeDialog();
+  await platform.resetController();
+}
+
 async function submitChallenge(): Promise<void> {
   const challenge = platform.inclusionChallenge;
   if (!challenge) {
@@ -283,40 +301,11 @@ function closeDialog(): void {
       <div class="button-row">
         <button class="primary-button" :disabled="!canStartInclusion" @click="beginInclusion">添加设备</button>
         <button class="ghost-button danger" :disabled="!canStartExclusion" @click="beginExclusion">删除设备</button>
+        <button class="ghost-button danger" :disabled="!canResetController" @click="resetController">Reset 控制器</button>
       </div>
 
       <p v-if="!driverReady" class="port-meta">请先在控制器页面连接控制器，等状态变为“已就绪”后再执行添加或删除设备。</p>
-
-      <div class="section-heading stacked-section-heading">
-        <div>
-          <p class="section-kicker">流程说明</p>
-          <h3>参考 Home Assistant 的经典添加流程</h3>
-        </div>
-      </div>
-
-      <div class="flow-guide-grid">
-        <article class="guide-card">
-          <span class="guide-index">1</span>
-          <div>
-            <strong>点击“添加设备”</strong>
-            <p>系统进入搜索状态，并弹出引导窗口。</p>
-          </div>
-        </article>
-        <article class="guide-card">
-          <span class="guide-index">2</span>
-          <div>
-            <strong>触发设备配网模式</strong>
-            <p>按照设备说明书操作，让设备进入添加或删除模式。</p>
-          </div>
-        </article>
-        <article class="guide-card">
-          <span class="guide-index">3</span>
-          <div>
-            <strong>如为 S2 设备，补全 DSK</strong>
-            <p>系统检测到安全添加请求后，会要求输入 DSK 前 5 位 PIN。</p>
-          </div>
-        </article>
-      </div>
+      <p v-else class="port-meta">Reset 控制器会强制清空当前控制器内的全部节点，包含在线节点和死节点。</p>
     </section>
 
     <section v-if="dialogOpen" class="flow-dialog-backdrop">
@@ -422,7 +411,7 @@ function closeDialog(): void {
 
         <template v-else-if="dialogStep === 'include-success' && platform.latestIncludedNode">
           <div class="flow-state">
-            <p class="flow-lead">设备已完成初始化并准备就绪。</p>
+            <p class="flow-lead">添加成功。</p>
             <p class="flow-copy">节点 {{ platform.latestIncludedNode.nodeId }} {{ platform.latestIncludedNode.name ? `（${platform.latestIncludedNode.name}）` : "" }} 已完成采访，可在节点页面查看详细信息并开始测试。</p>
           </div>
         </template>

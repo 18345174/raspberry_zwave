@@ -113,6 +113,12 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  app.post("/api/zwave/controller/reset", async () => {
+    const status = await services.zwaveRuntime.hardResetController();
+    services.nodeRegistry.clearAll();
+    return status;
+  });
+
   app.post("/api/zwave/inclusion/grant-security", async (request) => {
     const payload = grantSecurityBodySchema.parse(request.body ?? {});
     await services.inclusion.grantSecurity(payload.requestId, {

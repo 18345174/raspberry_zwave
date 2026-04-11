@@ -101,6 +101,9 @@ export const apiClient = {
   stopExclusion() {
     return request<{ ok: boolean }>("/api/zwave/exclusion/stop", { method: "POST" });
   },
+  resetController() {
+    return request<DriverStatus>("/api/zwave/controller/reset", { method: "POST" });
+  },
   grantSecurity(payload: { requestId: string; grant: string[]; clientSideAuth: boolean }) {
     return request<{ ok: boolean }>("/api/zwave/inclusion/grant-security", {
       method: "POST",
