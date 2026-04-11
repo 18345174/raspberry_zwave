@@ -149,8 +149,9 @@ const dialogTitle = computed(() => {
 });
 
 watch(
-  () => platform.inclusionChallenge,
-  (challenge) => {
+  () => platform.inclusionChallenge?.requestId,
+  () => {
+    const challenge = platform.inclusionChallenge;
     form.pin = "";
     form.grant =
       challenge?.challengeType === "grant_security_classes"
