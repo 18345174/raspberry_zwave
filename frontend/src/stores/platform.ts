@@ -56,6 +56,8 @@ export const usePlatformStore = defineStore("platform", () => {
   const provisioningBaselineNodeIds = ref<number[]>([]);
   const provisioningSettlePollsRemaining = ref(0);
   let socket: WebSocket | null = null;
+  let shouldKeepWebSocket = false;
+  let socketReconnectTimer: number | null = null;
   let statusPollTimer: number | null = null;
 
   function getErrorMessage(error: unknown): string {
@@ -276,7 +278,17 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   function connectWebSocket(shouldConnect: boolean): void {
+    shouldKeepWebSocket = shouldConnect;
+    if (socketReconnectTimer != null) {
+      window.clearTimeout(socketReconnectTimer);
+      socketReconnectTimer = null;
+    }
+
     if (socket) {
+      socket.onopen = null;
+      socket.onclose = null;
+      socket.onerror = null;
+      socket.onmessage = null;
       socket.close();
       socket = null;
     }
@@ -291,14 +303,39 @@ export const usePlatformStore = defineStore("platform", () => {
     if (token && token.trim()) {
       wsUrl.searchParams.set("token", token.trim());
     }
-    socket = new WebSocket(wsUrl.toString());
-    socket.onopen = () => {
+    const currentSocket = new WebSocket(wsUrl.toString());
+    socket = currentSocket;
+    currentSocket.onopen = () => {
+      if (socket !== currentSocket) {
+        return;
+      }
       wsState.value = "open";
     };
-    socket.onclose = () => {
+    currentSocket.onerror = () => {
+      if (socket !== currentSocket) {
+        return;
+      }
       wsState.value = "closed";
     };
-    socket.onmessage = (event) => {
+    currentSocket.onclose = (event) => {
+      if (socket !== currentSocket) {
+        return;
+      }
+      socket = null;
+      wsState.value = "closed";
+      if (!shouldKeepWebSocket) {
+        return;
+      }
+      if (event.code === 1008) {
+        errorMessage.value = "WebSocket 鉴权失败，请检查浏览器里的 API 令牌或重新登录。";
+        return;
+      }
+      socketReconnectTimer = window.setTimeout(() => {
+        socketReconnectTimer = null;
+        connectWebSocket(true);
+      }, 2000);
+    };
+    currentSocket.onmessage = (event) => {
       const payload = JSON.parse(event.data) as AppEvent;
       handleEvent(payload);
     };
