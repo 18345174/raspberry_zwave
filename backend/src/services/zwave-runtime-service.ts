@@ -1,6 +1,7 @@
 import type { AppConfig } from "../domain/config.js";
 import type {
   DriverStatus,
+  InclusionChallenge,
   InvokeCcApiInput,
   NodeDetail,
   NodeSummary,
@@ -150,6 +151,10 @@ export class ZwaveRuntimeService {
 
   public async startInclusion(): Promise<void> {
     await this.adapter.startInclusion();
+  }
+
+  public async getInclusionChallenge(): Promise<InclusionChallenge | null> {
+    return this.adapter.getInclusionChallenge();
   }
 
   public async stopInclusion(): Promise<void> {

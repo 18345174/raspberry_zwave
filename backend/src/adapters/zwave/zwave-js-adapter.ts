@@ -5,6 +5,7 @@ import type { AppConfig } from "../../domain/config.js";
 import type {
   DriverStatus,
   EndpointSnapshot,
+  InclusionChallenge,
   InvokeCcApiInput,
   NodeDetail,
   NodeSummary,
@@ -49,6 +50,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private modulePromise?: Promise<ZwaveModule>;
   private driver?: any;
   private controllerEventsAttached = false;
+  private inclusionChallenge: InclusionChallenge | null = null;
 
   public constructor(private readonly appConfig: AppConfig) {}
 
@@ -152,6 +154,10 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return { ...this.status };
   }
 
+  public async getInclusionChallenge(): Promise<InclusionChallenge | null> {
+    return this.inclusionChallenge ? { ...this.inclusionChallenge } : null;
+  }
+
   public async startInclusion(): Promise<void> {
     this.ensureDriverReady();
     const zwave = await this.loadModule();
@@ -233,6 +239,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Unknown security grant request: ${requestId}`);
     }
     this.pendingInclusionRequests.delete(requestId);
+    this.inclusionChallenge = null;
     this.log("info", "[security] Submitting granted security classes", {
       requestId,
       securityClasses: payload.grant,
@@ -250,6 +257,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Unknown DSK validation request: ${requestId}`);
     }
     this.pendingInclusionRequests.delete(requestId);
+    this.inclusionChallenge = null;
     this.log("info", "[dsk] Submitting DSK PIN for inclusion", {
       requestId,
       pinLength: pin.length,
@@ -363,6 +371,12 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
           requestedSecurityClasses: requested.securityClasses.map((item: number) => this.getSecurityClassName(item)),
           clientSideAuth: requested.clientSideAuth,
         });
+        this.inclusionChallenge = {
+          requestId,
+          challengeType: "grant_security_classes",
+          requested: requested.securityClasses.map((item: number) => this.getSecurityClassName(item)) as SecurityGrantInput["grant"],
+          clientSideAuth: requested.clientSideAuth,
+        };
         this.publish({
           type: "zwave.inclusion.challenge",
           payload: {
@@ -383,6 +397,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
           requestId,
           dsk,
         });
+        this.inclusionChallenge = {
+          requestId,
+          challengeType: "validate_dsk",
+          dsk,
+        };
         this.publish({
           type: "zwave.inclusion.challenge",
           payload: {
@@ -397,6 +416,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       },
       abort: () => {
         this.log("warn", "[include] Inclusion challenge flow aborted by controller");
+        this.inclusionChallenge = null;
         this.pendingInclusionRequests.clear();
         this.publish({ type: "zwave.inclusion.challenge.aborted", payload: {} });
       },
@@ -458,6 +478,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         nodeId: node.id,
         result,
       });
+      this.inclusionChallenge = null;
       this.updateStatus({ isInclusionActive: false });
       this.publish({ type: "zwave.node.added", payload: { node: this.toNodeDetail(node), result } });
     });
@@ -510,12 +531,14 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const controller = driver.controller;
     controller.on?.("inclusion stopped", () => {
       this.updateStatus({ isInclusionActive: false });
+      this.inclusionChallenge = null;
       this.log("info", "[include] Controller reported inclusion stopped");
       this.publish({ type: "zwave.inclusion.stopped", payload: {} });
     });
 
     controller.on?.("exclusion stopped", () => {
       this.updateStatus({ isExclusionActive: false });
+      this.inclusionChallenge = null;
       this.log("info", "[exclude] Controller reported exclusion stopped");
       this.publish({ type: "zwave.exclusion.stopped", payload: {} });
     });
@@ -685,6 +708,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.driver = undefined;
     this.controllerEventsAttached = false;
     this.pendingInclusionRequests.clear();
+    this.inclusionChallenge = null;
     await current.destroy();
   }
 

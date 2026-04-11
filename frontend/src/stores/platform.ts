@@ -6,6 +6,7 @@ import type {
   AppEvent,
   AuthSessionView,
   DriverStatus,
+  InclusionChallenge,
   NodeDetail,
   NodeSummary,
   SerialPortInfo,
@@ -38,7 +39,7 @@ export const usePlatformStore = defineStore("platform", () => {
   const runs = ref<TestRunRecord[]>([]);
   const runLogs = ref<Record<string, TestLogRecord[]>>({});
   const configItems = ref<Array<{ key: string; value: unknown }>>([]);
-  const inclusionChallenge = ref<Record<string, unknown> | null>(null);
+  const inclusionChallenge = ref<InclusionChallenge | null>(null);
   const latestIncludedNode = ref<{ nodeId: number; name?: string; timestamp: string } | null>(null);
   const latestExcludedNode = ref<{ nodeId: number; timestamp: string } | null>(null);
   const selectedPortPath = ref<string>("");
@@ -192,6 +193,11 @@ export const usePlatformStore = defineStore("platform", () => {
       try {
         const latestStatus = await apiClient.getStatus();
         applyStatus(latestStatus);
+        if (latestStatus.isInclusionActive) {
+          inclusionChallenge.value = (await apiClient.getInclusionChallenge()).challenge;
+        } else if (!latestStatus.isExclusionActive) {
+          inclusionChallenge.value = null;
+        }
       } catch {
         // Ignore transient polling failures while the websocket remains the primary source of truth.
       }
@@ -231,7 +237,7 @@ export const usePlatformStore = defineStore("platform", () => {
     }
 
     if (event.type === "zwave.inclusion.challenge") {
-      inclusionChallenge.value = event.payload as Record<string, unknown>;
+      inclusionChallenge.value = event.payload as InclusionChallenge;
       return;
     }
 

@@ -21,6 +21,19 @@ export interface DriverStatus {
   lastError?: string;
 }
 
+export type InclusionChallenge =
+  | {
+      requestId: string;
+      challengeType: "grant_security_classes";
+      requested: Array<"S2_AccessControl" | "S2_Authenticated" | "S2_Unauthenticated" | "S0_Legacy">;
+      clientSideAuth: boolean;
+    }
+  | {
+      requestId: string;
+      challengeType: "validate_dsk";
+      dsk: string;
+    };
+
 export interface NodeValueSnapshot {
   nodeId: number;
   endpoint: number;

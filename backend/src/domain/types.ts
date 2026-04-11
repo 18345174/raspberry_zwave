@@ -39,6 +39,19 @@ export interface SecurityGrantInput {
   clientSideAuth: boolean;
 }
 
+export type InclusionChallenge =
+  | {
+      requestId: string;
+      challengeType: "grant_security_classes";
+      requested: SecurityClassName[];
+      clientSideAuth: boolean;
+    }
+  | {
+      requestId: string;
+      challengeType: "validate_dsk";
+      dsk: string;
+    };
+
 export interface ValueIdInput {
   commandClass: string | number;
   endpoint?: number;

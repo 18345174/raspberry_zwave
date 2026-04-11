@@ -1,6 +1,7 @@
 import type {
   AuthSessionView,
   DriverStatus,
+  InclusionChallenge,
   NodeDetail,
   NodeSummary,
   SerialPortInfo,
@@ -87,6 +88,9 @@ export const apiClient = {
   },
   startInclusion() {
     return request<{ ok: boolean }>("/api/zwave/inclusion/start", { method: "POST" });
+  },
+  getInclusionChallenge() {
+    return request<{ challenge: InclusionChallenge | null }>("/api/zwave/inclusion/challenge");
   },
   stopInclusion() {
     return request<{ ok: boolean }>("/api/zwave/inclusion/stop", { method: "POST" });

@@ -1,4 +1,4 @@
-import type { SecurityGrantInput } from "../domain/types.js";
+import type { InclusionChallenge, SecurityGrantInput } from "../domain/types.js";
 import { ZwaveRuntimeService } from "./zwave-runtime-service.js";
 
 export class InclusionService {
@@ -18,6 +18,10 @@ export class InclusionService {
 
   public async stopExclusion(): Promise<void> {
     await this.zwaveRuntime.stopExclusion();
+  }
+
+  public async getInclusionChallenge(): Promise<InclusionChallenge | null> {
+    return this.zwaveRuntime.getInclusionChallenge();
   }
 
   public async grantSecurity(requestId: string, payload: SecurityGrantInput): Promise<void> {

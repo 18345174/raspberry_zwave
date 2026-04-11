@@ -1,5 +1,6 @@
 import type {
   DriverStatus,
+  InclusionChallenge,
   InvokeCcApiInput,
   NodeDetail,
   NodeSummary,
@@ -15,6 +16,7 @@ export interface IZwaveAdapter {
   disconnect(): Promise<void>;
   reconnect(portPath: string): Promise<void>;
   getStatus(): Promise<DriverStatus>;
+  getInclusionChallenge(): Promise<InclusionChallenge | null>;
   startInclusion(): Promise<void>;
   stopInclusion(): Promise<void>;
   startExclusion(): Promise<void>;

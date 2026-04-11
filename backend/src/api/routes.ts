@@ -94,6 +94,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  app.get("/api/zwave/inclusion/challenge", async () => {
+    return { challenge: await services.inclusion.getInclusionChallenge() };
+  });
+
   app.post("/api/zwave/inclusion/stop", async () => {
     await services.inclusion.stopInclusion();
     return { ok: true };

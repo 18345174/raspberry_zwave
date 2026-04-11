@@ -37,6 +37,9 @@ const flowTone = computed<"good" | "warn">(() => {
 
 const driverReady = computed(() => platform.status.phase === "ready");
 const challengeType = computed(() => String(platform.inclusionChallenge?.challengeType ?? ""));
+const challengeDsk = computed(() =>
+  platform.inclusionChallenge?.challengeType === "validate_dsk" ? platform.inclusionChallenge.dsk : "",
+);
 
 const canStartInclusion = computed(
   () => driverReady.value && !platform.status.isInclusionActive && !platform.status.isExclusionActive,
@@ -304,7 +307,7 @@ function closeDialog(): void {
             <p class="flow-copy">请根据设备标签或包装盒上的信息，填写 DSK 前 5 位 PIN 码。</p>
           </div>
 
-          <p class="mono-line">DSK：{{ platform.inclusionChallenge.dsk }}</p>
+          <p class="mono-line">DSK：{{ challengeDsk }}</p>
 
           <label class="field-stack">
             <span>DSK 前 5 位 PIN</span>
