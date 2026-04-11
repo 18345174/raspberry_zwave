@@ -39,6 +39,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private readonly serialDiscovery = new SerialDiscoveryService();
   private readonly emitter = new EventEmitter();
   private readonly pendingInclusionRequests = new Map<string, PendingRequest>();
+  private readonly publishedReadyNodeIds = new Set<number>();
   private readonly status: DriverStatus = {
     phase: "idle",
     isInclusionActive: false,
@@ -74,6 +75,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
 
     const zwave = await this.loadModule();
+    this.publishedReadyNodeIds.clear();
     this.log("info", "[driver] Creating Z-Wave driver", {
       portPath,
       cacheDir: this.appConfig.zwaveCacheDir,
@@ -464,32 +466,24 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       this.publish({ type: "zwave.controller.updated", payload: { nodesReady: true } });
     });
 
-    driver.on("ready", (node: any) => {
+    driver.on("node interview completed", (node: any) => {
+      this.log("info", "[node] Node interview completed", {
+        nodeId: node.id,
+        interviewStage: node.interviewStage != undefined ? String(node.interviewStage) : undefined,
+        ready: Boolean(node.ready),
+      });
+      this.publishNodeUpdated(node);
+      this.publishNodeReadyIfEligible(node, "interview_completed");
+    });
+
+    driver.on("node ready", (node: any) => {
       this.log("info", "[node] Node interview ready", {
         nodeId: node.id,
         interviewStage: node.interviewStage != undefined ? String(node.interviewStage) : undefined,
         status: node.status != undefined ? String(node.status) : undefined,
       });
-      this.publish({ type: "zwave.node.ready", payload: this.toNodeDetail(node) });
-      this.publish({ type: "zwave.node.updated", payload: this.toNodeDetail(node) });
-    });
-
-    driver.on("node added", (node: any, result: unknown) => {
-      this.log("info", "[node] Node added", {
-        nodeId: node.id,
-        result,
-      });
-      this.inclusionChallenge = null;
-      this.updateStatus({ isInclusionActive: false });
-      this.publish({ type: "zwave.node.added", payload: { node: this.toNodeDetail(node), result } });
-    });
-
-    driver.on("node removed", (node: any, reason: unknown) => {
-      this.log("warn", "[node] Node removed", {
-        nodeId: node.id,
-        reason,
-      });
-      this.publish({ type: "zwave.node.removed", payload: { nodeId: node.id, reason } });
+      this.publishNodeUpdated(node);
+      this.publishNodeReadyIfEligible(node, "ready");
     });
 
     const forwardValueEvent = (type: string, message: string) => (node: any, args: any) => {
@@ -500,11 +494,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       this.publish({ type, payload: { nodeId: node.id, ...args } });
     };
 
-    driver.on("value added", forwardValueEvent("zwave.value.updated", "[value] Value added"));
-    driver.on("value updated", forwardValueEvent("zwave.value.updated", "[value] Value updated"));
-    driver.on("value removed", forwardValueEvent("zwave.value.updated", "[value] Value removed"));
-    driver.on("metadata updated", forwardValueEvent("zwave.value.updated", "[value] Metadata updated"));
-    driver.on("notification", (node: any, ccId: number, args: unknown) => {
+    driver.on("node value added", forwardValueEvent("zwave.value.updated", "[value] Value added"));
+    driver.on("node value updated", forwardValueEvent("zwave.value.updated", "[value] Value updated"));
+    driver.on("node value removed", forwardValueEvent("zwave.value.updated", "[value] Value removed"));
+    driver.on("node metadata updated", forwardValueEvent("zwave.value.updated", "[value] Metadata updated"));
+    driver.on("node notification", (node: any, ccId: number, args: unknown) => {
       this.log("info", "[notify] Notification received", {
         nodeId: node.id,
         commandClass: this.getCommandClassName(ccId),
@@ -546,6 +540,27 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         nodeId,
       });
       this.publish({ type: "zwave.node.found", payload: { nodeId } });
+    });
+
+    controller.on?.("node added", (node: any, result: unknown) => {
+      this.log("info", "[node] Node added", {
+        nodeId: node.id,
+        result: this.summarizeUnknown(result),
+      });
+      this.inclusionChallenge = null;
+      this.updateStatus({ isInclusionActive: false });
+      this.publish({ type: "zwave.node.added", payload: { node: this.toNodeDetail(node), result } });
+      this.publishNodeUpdated(node);
+      this.publishNodeReadyIfEligible(node, "node_added");
+    });
+
+    controller.on?.("node removed", (node: any, reason: unknown) => {
+      this.log("warn", "[node] Node removed", {
+        nodeId: node.id,
+        reason,
+      });
+      this.publishedReadyNodeIds.delete(node.id);
+      this.publish({ type: "zwave.node.removed", payload: { nodeId: node.id, reason } });
     });
 
     controller.on?.("exclusion stopped", () => {
@@ -703,6 +718,29 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.publish({ type: "zwave.status.changed", payload: { ...this.status } });
   }
 
+  private publishNodeUpdated(node: any): void {
+    this.publish({ type: "zwave.node.updated", payload: this.toNodeDetail(node) });
+  }
+
+  private publishNodeReadyIfEligible(node: any, source: string): void {
+    const detail = this.toNodeDetail(node);
+    const interviewComplete = Boolean(detail.ready) || String(detail.interviewStage ?? "").toLowerCase() === "complete";
+    if (!interviewComplete) {
+      return;
+    }
+    if (this.publishedReadyNodeIds.has(detail.nodeId)) {
+      return;
+    }
+    this.publishedReadyNodeIds.add(detail.nodeId);
+    this.log("info", "[node] Publishing node ready event", {
+      nodeId: detail.nodeId,
+      source,
+      interviewStage: detail.interviewStage,
+      ready: detail.ready,
+    });
+    this.publish({ type: "zwave.node.ready", payload: detail });
+  }
+
   private ensureDriverReady(): void {
     if (!this.driver || this.status.hasReadyDriver !== true) {
       throw new Error("Z-Wave driver is not ready.");
@@ -720,6 +758,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const current = this.driver;
     this.driver = undefined;
     this.controllerEventsAttached = false;
+    this.publishedReadyNodeIds.clear();
     this.pendingInclusionRequests.clear();
     this.inclusionChallenge = null;
     await current.destroy();
