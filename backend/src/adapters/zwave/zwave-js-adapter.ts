@@ -63,7 +63,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   public async connect(portPath: string): Promise<void> {
     if (this.driver) {
-      this.log("warn", "Connect skipped because driver instance already exists", {
+      this.log("warn", "[driver] Connect skipped because driver instance already exists", {
         portPath,
         phase: this.status.phase,
         connectedPortPath: this.status.connectedPortPath,
@@ -72,7 +72,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
 
     const zwave = await this.loadModule();
-    this.log("info", "Creating Z-Wave driver", {
+    this.log("info", "[driver] Creating Z-Wave driver", {
       portPath,
       cacheDir: this.appConfig.zwaveCacheDir,
       deviceConfigDir: this.appConfig.zwaveDeviceConfigDir,
@@ -92,7 +92,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.attachDriverEvents(driver, zwave);
 
     try {
-      this.log("info", "Starting Z-Wave driver", { portPath });
+      this.log("info", "[driver] Starting Z-Wave driver", { portPath });
       await driver.start();
       this.updateStatus({
         phase: driver.ready ? "ready" : "connecting",
@@ -100,7 +100,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         selectedPortPath: portPath,
         hasReadyDriver: Boolean(driver.ready),
       });
-      this.log("info", "Driver start returned", {
+      this.log("info", "[driver] Driver start returned", {
         portPath,
         ready: Boolean(driver.ready),
         phase: this.status.phase,
@@ -113,7 +113,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         hasReadyDriver: false,
         lastError: error instanceof Error ? error.message : String(error),
       });
-      this.log("error", "Driver start failed", {
+      this.log("error", "[driver] Driver start failed", {
         portPath,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -123,10 +123,10 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   public async disconnect(): Promise<void> {
     if (!this.driver) {
-      this.log("info", "Disconnect skipped because no driver instance exists");
+      this.log("info", "[driver] Disconnect skipped because no driver instance exists");
       return;
     }
-    this.log("info", "Destroying Z-Wave driver", {
+    this.log("info", "[driver] Destroying Z-Wave driver", {
       connectedPortPath: this.status.connectedPortPath,
     });
     this.updateStatus({ phase: "disconnecting" });
@@ -140,7 +140,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       isInclusionActive: false,
       isExclusionActive: false,
     });
-    this.log("info", "Driver destroyed");
+    this.log("info", "[driver] Driver destroyed");
   }
 
   public async reconnect(portPath: string): Promise<void> {
@@ -155,7 +155,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   public async startInclusion(): Promise<void> {
     this.ensureDriverReady();
     const zwave = await this.loadModule();
-    this.log("info", "Starting inclusion mode", {
+    this.log("info", "[include] Starting inclusion mode", {
       strategy: "Default",
       connectedPortPath: this.status.connectedPortPath,
     });
@@ -164,14 +164,14 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       userCallbacks: this.createInclusionCallbacks(),
     });
     if (!started) {
-      this.log("warn", "Inclusion did not start", {
+      this.log("warn", "[include] Inclusion did not start", {
         connectedPortPath: this.status.connectedPortPath,
         reason: "already_active_or_rejected",
       });
       throw new Error("Failed to start inclusion or inclusion is already active.");
     }
     this.updateStatus({ isInclusionActive: true, isExclusionActive: false });
-    this.log("info", "Inclusion mode active", {
+    this.log("info", "[include] Inclusion mode active", {
       connectedPortPath: this.status.connectedPortPath,
     });
     this.publish({ type: "zwave.inclusion.started", payload: { portPath: this.status.connectedPortPath } });
@@ -179,12 +179,12 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   public async stopInclusion(): Promise<void> {
     this.ensureDriverReady();
-    this.log("info", "Stopping inclusion mode", {
+    this.log("info", "[include] Stopping inclusion mode", {
       connectedPortPath: this.status.connectedPortPath,
     });
     await this.driver.controller.stopInclusion();
     this.updateStatus({ isInclusionActive: false });
-    this.log("info", "Inclusion mode stopped", {
+    this.log("info", "[include] Inclusion mode stopped", {
       connectedPortPath: this.status.connectedPortPath,
     });
     this.publish({ type: "zwave.inclusion.stopped", payload: {} });
@@ -193,7 +193,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   public async startExclusion(): Promise<void> {
     this.ensureDriverReady();
     const zwave = await this.loadModule();
-    this.log("info", "Starting exclusion mode", {
+    this.log("info", "[exclude] Starting exclusion mode", {
       strategy: "ExcludeOnly",
       connectedPortPath: this.status.connectedPortPath,
     });
@@ -201,14 +201,14 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       strategy: zwave.ExclusionStrategy.ExcludeOnly,
     });
     if (!started) {
-      this.log("warn", "Exclusion did not start", {
+      this.log("warn", "[exclude] Exclusion did not start", {
         connectedPortPath: this.status.connectedPortPath,
         reason: "already_active_or_rejected",
       });
       throw new Error("Failed to start exclusion or exclusion is already active.");
     }
     this.updateStatus({ isExclusionActive: true, isInclusionActive: false });
-    this.log("info", "Exclusion mode active", {
+    this.log("info", "[exclude] Exclusion mode active", {
       connectedPortPath: this.status.connectedPortPath,
     });
     this.publish({ type: "zwave.exclusion.started", payload: {} });
@@ -216,12 +216,12 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   public async stopExclusion(): Promise<void> {
     this.ensureDriverReady();
-    this.log("info", "Stopping exclusion mode", {
+    this.log("info", "[exclude] Stopping exclusion mode", {
       connectedPortPath: this.status.connectedPortPath,
     });
     await this.driver.controller.stopExclusion();
     this.updateStatus({ isExclusionActive: false });
-    this.log("info", "Exclusion mode stopped", {
+    this.log("info", "[exclude] Exclusion mode stopped", {
       connectedPortPath: this.status.connectedPortPath,
     });
     this.publish({ type: "zwave.exclusion.stopped", payload: {} });
@@ -233,7 +233,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Unknown security grant request: ${requestId}`);
     }
     this.pendingInclusionRequests.delete(requestId);
-    this.log("info", "Submitting granted security classes", {
+    this.log("info", "[security] Submitting granted security classes", {
       requestId,
       securityClasses: payload.grant,
       clientSideAuth: payload.clientSideAuth,
@@ -250,7 +250,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Unknown DSK validation request: ${requestId}`);
     }
     this.pendingInclusionRequests.delete(requestId);
-    this.log("info", "Submitting DSK PIN for inclusion", {
+    this.log("info", "[dsk] Submitting DSK PIN for inclusion", {
       requestId,
       pinLength: pin.length,
     });
@@ -351,7 +351,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return {
       grantSecurityClasses: async (requested: any) => {
         const requestId = createId("inc_req");
-        this.log("info", "Received security class grant challenge", {
+        this.log("info", "[security] Received security class grant challenge", {
           requestId,
           requestedSecurityClasses: requested.securityClasses.map((item: number) => this.getSecurityClassName(item)),
           clientSideAuth: requested.clientSideAuth,
@@ -372,7 +372,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       validateDSKAndEnterPIN: async (...args: unknown[]) => {
         const dsk = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
         const requestId = createId("inc_req");
-        this.log("info", "Received DSK validation challenge", {
+        this.log("info", "[dsk] Received DSK validation challenge", {
           requestId,
           dsk,
         });
@@ -389,7 +389,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         });
       },
       abort: () => {
-        this.log("warn", "Inclusion challenge flow aborted by controller");
+        this.log("warn", "[include] Inclusion challenge flow aborted by controller");
         this.pendingInclusionRequests.clear();
         this.publish({ type: "zwave.inclusion.challenge.aborted", payload: {} });
       },
@@ -398,7 +398,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   private attachDriverEvents(driver: any, zwave: ZwaveModule): void {
     driver.on("error", (error: unknown) => {
-      this.log("error", "Driver emitted error", {
+      this.log("error", "[driver] Driver emitted error", {
         error: error instanceof Error ? error.message : String(error),
       });
       this.updateStatus({
@@ -414,7 +414,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
     driver.on("driver ready", () => {
       this.attachControllerEvents(driver);
-      this.log("info", "Controller reported ready", {
+      this.log("info", "[controller] Controller reported ready", {
         controllerId: driver.controller?.ownNodeId,
         homeId: driver.controller?.homeId != undefined ? `0x${driver.controller.homeId.toString(16)}` : undefined,
       });
@@ -431,14 +431,14 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("all nodes ready", () => {
-      this.log("info", "All nodes ready", {
+      this.log("info", "[controller] All nodes ready", {
         nodeCount: driver.controller?.nodes?.size,
       });
       this.publish({ type: "zwave.controller.updated", payload: { nodesReady: true } });
     });
 
     driver.on("ready", (node: any) => {
-      this.log("info", "Node interview ready", {
+      this.log("info", "[node] Node interview ready", {
         nodeId: node.id,
         interviewStage: node.interviewStage != undefined ? String(node.interviewStage) : undefined,
         status: node.status != undefined ? String(node.status) : undefined,
@@ -447,7 +447,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("node added", (node: any, result: unknown) => {
-      this.log("info", "Node added", {
+      this.log("info", "[node] Node added", {
         nodeId: node.id,
         result,
       });
@@ -456,7 +456,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("node removed", (node: any, reason: unknown) => {
-      this.log("warn", "Node removed", {
+      this.log("warn", "[node] Node removed", {
         nodeId: node.id,
         reason,
       });
@@ -471,12 +471,12 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       this.publish({ type, payload: { nodeId: node.id, ...args } });
     };
 
-    driver.on("value added", forwardValueEvent("zwave.value.updated", "Value added"));
-    driver.on("value updated", forwardValueEvent("zwave.value.updated", "Value updated"));
-    driver.on("value removed", forwardValueEvent("zwave.value.updated", "Value removed"));
-    driver.on("metadata updated", forwardValueEvent("zwave.value.updated", "Metadata updated"));
+    driver.on("value added", forwardValueEvent("zwave.value.updated", "[value] Value added"));
+    driver.on("value updated", forwardValueEvent("zwave.value.updated", "[value] Value updated"));
+    driver.on("value removed", forwardValueEvent("zwave.value.updated", "[value] Value removed"));
+    driver.on("metadata updated", forwardValueEvent("zwave.value.updated", "[value] Metadata updated"));
     driver.on("notification", (node: any, ccId: number, args: unknown) => {
-      this.log("info", "Notification received", {
+      this.log("info", "[notify] Notification received", {
         nodeId: node.id,
         commandClass: this.getCommandClassName(ccId),
         args: this.summarizeUnknown(args),
@@ -503,13 +503,13 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const controller = driver.controller;
     controller.on?.("inclusion stopped", () => {
       this.updateStatus({ isInclusionActive: false });
-      this.log("info", "Controller reported inclusion stopped");
+      this.log("info", "[include] Controller reported inclusion stopped");
       this.publish({ type: "zwave.inclusion.stopped", payload: {} });
     });
 
     controller.on?.("exclusion stopped", () => {
       this.updateStatus({ isExclusionActive: false });
-      this.log("info", "Controller reported exclusion stopped");
+      this.log("info", "[exclude] Controller reported exclusion stopped");
       this.publish({ type: "zwave.exclusion.stopped", payload: {} });
     });
 
