@@ -21,6 +21,7 @@ const platform = usePlatformStore();
             <tr>
               <th>节点 ID</th>
               <th>名称</th>
+              <th>设备类型</th>
               <th>制造商</th>
               <th>产品</th>
               <th>安全</th>
@@ -31,6 +32,7 @@ const platform = usePlatformStore();
             <tr v-for="node in platform.nodes" :key="node.nodeId">
               <td>#{{ node.nodeId }}</td>
               <td>{{ node.name || '-' }}</td>
+              <td>{{ node.deviceType || '-' }}</td>
               <td>{{ node.manufacturer || '-' }}</td>
               <td>{{ node.product || '-' }}</td>
               <td>{{ node.isSecure ? '安全' : '非安全' }}</td>

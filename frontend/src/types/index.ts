@@ -55,6 +55,7 @@ export interface EndpointSnapshot {
 export interface NodeSummary {
   nodeId: number;
   name?: string;
+  deviceType?: string;
   manufacturer?: string;
   product?: string;
   productCode?: string;

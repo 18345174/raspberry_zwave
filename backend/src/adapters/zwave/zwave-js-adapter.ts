@@ -645,6 +645,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return {
       nodeId: node.id,
       name: node.name,
+      deviceType: this.getNodeDeviceType(node),
       manufacturer: node.manufacturer || node.deviceConfig?.manufacturer,
       product: node.productLabel || node.deviceConfig?.label,
       productCode: node.productCode,
@@ -660,6 +661,24 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       endpoints,
       values,
     };
+  }
+
+  private getNodeDeviceType(node: any): string | undefined {
+    const specificLabel = node?.deviceClass?.specific?.label;
+    if (typeof specificLabel === "string" && specificLabel.trim() && specificLabel !== "Unused") {
+      return specificLabel.trim();
+    }
+
+    const genericLabel = node?.deviceClass?.generic?.label;
+    if (typeof genericLabel === "string" && genericLabel.trim()) {
+      return genericLabel.trim();
+    }
+
+    if (node?.id === this.status.controllerId) {
+      return "Controller";
+    }
+
+    return undefined;
   }
 
   private getEndpoints(node: any): EndpointSnapshot[] {
