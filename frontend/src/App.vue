@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
-import { RouterLink, RouterView, useRoute } from "vue-router";
+import { computed, onMounted, watch } from "vue";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
 import MetricCard from "./components/MetricCard.vue";
 import StatusPill from "./components/StatusPill.vue";
@@ -8,15 +8,17 @@ import { usePlatformStore } from "./stores/platform";
 
 const platform = usePlatformStore();
 const route = useRoute();
+const router = useRouter();
 
 const navItems = [
-  { to: "/login", label: "Login" },
   { to: "/controller", label: "Controller" },
   { to: "/inclusion", label: "Inclusion" },
   { to: "/nodes", label: "Nodes" },
   { to: "/tests", label: "Tests" },
   { to: "/system", label: "System" },
 ];
+
+const isLoginRoute = computed(() => route.path === "/login");
 
 const statusTone = computed(() => {
   switch (platform.status.phase) {
@@ -34,11 +36,34 @@ const statusTone = computed(() => {
 
 onMounted(async () => {
   await platform.bootstrap();
+  syncRouteWithAuth();
 });
+
+watch(
+  () => [platform.authSession.isAuthenticated, route.path],
+  () => {
+    syncRouteWithAuth();
+  },
+);
+
+function syncRouteWithAuth(): void {
+  if (!platform.authSession.isAuthenticated && route.path !== "/login") {
+    void router.replace("/login");
+    return;
+  }
+
+  if (platform.authSession.isAuthenticated && route.path === "/login") {
+    void router.replace("/controller");
+  }
+}
 </script>
 
 <template>
-  <div class="shell">
+  <div v-if="isLoginRoute" class="auth-shell">
+    <RouterView />
+  </div>
+
+  <div v-else class="shell">
     <aside class="shell-sidebar">
       <div>
         <p class="sidebar-kicker">Raspberry Pi 4B / Ubuntu</p>
@@ -66,6 +91,8 @@ onMounted(async () => {
           {{ platform.authSession.isAuthenticated ? `User: ${platform.authSession.username}` : "Guest" }} / WS: {{ platform.wsState }}
         </span>
       </div>
+
+      <button class="ghost-button sidebar-logout" @click="platform.logout">退出登录</button>
     </aside>
 
     <main class="shell-main">

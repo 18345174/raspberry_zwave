@@ -25,18 +25,28 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <div class="page-grid">
-    <section class="page-card accent-card">
+  <section class="auth-panel">
+    <div class="auth-copy">
+      <p class="section-kicker">Z-Wave Access</p>
+      <h2>先登录，再进入控制台。</h2>
+      <p class="hero-copy">
+        Controller 连接、节点巡检、测试执行和系统配置都收敛到同一套紫色控制台里；入口先做认证，后续操作更干净。
+      </p>
+
+      <div class="auth-badges">
+        <span class="status-pill" data-tone="good">Controller Runtime</span>
+        <span class="status-pill" data-tone="warn">Live Diagnostics</span>
+        <span class="status-pill" data-tone="neutral">Raspberry Pi</span>
+      </div>
+    </div>
+
+    <section class="auth-card">
       <div class="section-heading">
         <div>
           <p class="section-kicker">Authentication</p>
           <h3>登录测试平台</h3>
         </div>
       </div>
-
-      <p class="hero-copy">
-        当后端启用了 `ADMIN_PASSWORD` 或 `ADMIN_PASSWORD_HASH` 后，浏览器需要先登录，再访问 HTTP API 与 WebSocket。
-      </p>
 
       <p v-if="!platform.authSession.supportsPasswordLogin" class="empty-state">
         当前后端未启用密码登录；如果配置了 `API_TOKEN`，请在 `System` 页面直接保存 token。
@@ -54,13 +64,16 @@ async function submit(): Promise<void> {
 
       <div class="button-row">
         <button class="primary-button" :disabled="!platform.authSession.supportsPasswordLogin" @click="submit">登录</button>
-        <button class="ghost-button" @click="platform.logout">退出当前会话</button>
+        <button class="ghost-button" @click="platform.logout">清除会话</button>
       </div>
 
       <p v-if="form.error" class="error-text">{{ form.error }}</p>
-      <p class="mono-line">Authenticated: {{ platform.authSession.isAuthenticated ? 'yes' : 'no' }}</p>
-      <p class="mono-line">User: {{ platform.authSession.username || '-' }}</p>
-      <p class="mono-line">Expires: {{ platform.authSession.expiresAt || '-' }}</p>
+
+      <div class="auth-meta">
+        <p class="mono-line">Authenticated: {{ platform.authSession.isAuthenticated ? 'yes' : 'no' }}</p>
+        <p class="mono-line">User: {{ platform.authSession.username || '-' }}</p>
+        <p class="mono-line">Expires: {{ platform.authSession.expiresAt || '-' }}</p>
+      </div>
     </section>
-  </div>
+  </section>
 </template>

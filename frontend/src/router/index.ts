@@ -10,7 +10,7 @@ import SystemPage from "../pages/SystemPage.vue";
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/", redirect: "/controller" },
+    { path: "/", redirect: "/login" },
     { path: "/login", component: LoginPage },
     { path: "/controller", component: ControllerPage },
     { path: "/inclusion", component: InclusionPage },
