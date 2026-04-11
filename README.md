@@ -55,11 +55,20 @@
 ## 部署脚本
 
 - `deploy/scripts/one-click-deploy-rpi.sh`：树莓派 Ubuntu 一键部署；默认登录密码 `123456`
-- `deploy/scripts/tail-logs.sh`：实时查看 systemd 服务日志，支持 `all` / `zwave` / `errors`
+- `deploy/scripts/restart-platform.sh`：重启平台；会先检查端口占用，发现占用后执行 `kill -9`
+- `deploy/scripts/tail-logs.sh`：实时查看后端服务日志，支持 `backend` / `controller` / `zwave` / `errors` / `all`
 - `deploy/scripts/prepare-ubuntu.sh`：安装 Ubuntu 依赖与 Node.js LTS
 - `deploy/scripts/bootstrap-env.sh`：从样例生成 `backend/.env`
 - `deploy/scripts/install.sh`：同步代码、安装依赖、构建并注册 systemd
 - `backend/scripts/generate-password-hash.mjs`：生成 `ADMIN_PASSWORD_HASH`
+
+## 重启脚本
+
+- 首次安装用：`bash deploy/scripts/one-click-deploy-rpi.sh`
+- 日常重启用：`bash deploy/scripts/restart-platform.sh`
+- 脚本会先检查后端端口和前端端口是否被占用；若被占用会执行 `kill -9`
+- 默认后端端口读取 `backend/.env` 里的 `PORT`，默认前端端口为 `5173`
+- 如有单独前端 systemd 服务，可额外传入：`FRONTEND_SERVICE_NAME=<your-frontend.service> bash deploy/scripts/restart-platform.sh`
 
 ## 日志查看
 
