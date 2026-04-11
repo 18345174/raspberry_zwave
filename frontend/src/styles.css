@@ -163,8 +163,13 @@ pre,
 }
 
 .page-header {
-  padding: 10px 18px;
+  padding: 6px 14px;
   min-height: 0;
+}
+
+.page-header h2 {
+  font-size: 1.18rem;
+  line-height: 1.15;
 }
 
 .metric-card {
