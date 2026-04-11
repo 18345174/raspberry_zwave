@@ -63,7 +63,9 @@
 
 ## 日志查看
 
-- 实时查看 Z-Wave 相关日志：`bash deploy/scripts/tail-logs.sh`
-- 实时查看全部服务日志：`bash deploy/scripts/tail-logs.sh all`
+- 实时查看后端完整运行日志：`bash deploy/scripts/tail-logs.sh`
+- 只看 Controller 连接相关日志：`bash deploy/scripts/tail-logs.sh controller`
+- 实时查看筛选后的 Z-Wave 相关日志：`bash deploy/scripts/tail-logs.sh zwave`
 - 仅查看错误相关日志：`bash deploy/scripts/tail-logs.sh errors`
+- 实时查看全部服务日志：`bash deploy/scripts/tail-logs.sh all`
 - 如当前用户没有 journal 权限，脚本会自动尝试走 `sudo journalctl`

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SERVICE_NAME=${SERVICE_NAME:-zwave-test-platform.service}
-MODE=${1:-zwave}
+MODE=${1:-backend}
 TAIL_LINES=${TAIL_LINES:-120}
 
 JOURNAL_ARGS=(-u "$SERVICE_NAME" -n "$TAIL_LINES" -f -o short-iso --no-hostname)
@@ -17,8 +17,11 @@ run_journal() {
 }
 
 case "$MODE" in
-  all)
+  backend|all)
     run_journal
+    ;;
+  controller)
+    run_journal | grep -Ei --line-buffered "zwave-runtime|zwave-adapter|controller|serial|tty|usb|connect|disconnect|ready|error|failed|timeout|driver"
     ;;
   zwave)
     run_journal | grep -Ei --line-buffered "zwave|z-wave|driver|serial|tty|usb|node|controller|inclusion|exclusion|security|s0|s2|dsk|heal|interview|value updated|notification|error|failed"
@@ -29,9 +32,12 @@ case "$MODE" in
   *)
     cat <<EOF
 Usage: $0 [all|zwave|errors]
+Usage: $0 [backend|controller|zwave|errors|all]
 
 Examples:
   bash deploy/scripts/tail-logs.sh
+  bash deploy/scripts/tail-logs.sh backend
+  bash deploy/scripts/tail-logs.sh controller
   bash deploy/scripts/tail-logs.sh all
   bash deploy/scripts/tail-logs.sh errors
   SERVICE_NAME=zwave-test-platform.service bash deploy/scripts/tail-logs.sh zwave

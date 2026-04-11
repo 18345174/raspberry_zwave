@@ -42,11 +42,16 @@ export class ZwaveRuntimeService {
       selectedPortPath: path,
       selectedStablePath: resolvedStablePath,
     });
+    this.log("info", "Controller port selected", {
+      path,
+      stablePath: resolvedStablePath,
+    });
   }
 
   public async connect(): Promise<DriverStatus> {
     const selection = this.storage.getControllerSelection();
     if (!selection.selectedPortPath) {
+      this.log("warn", "Connect requested without a selected controller port");
       throw new Error("No controller port has been selected.");
     }
     const currentStatus = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);
@@ -54,9 +59,17 @@ export class ZwaveRuntimeService {
       currentStatus.connectedPortPath === selection.selectedPortPath &&
       (currentStatus.phase === "connecting" || currentStatus.phase === "ready")
     ) {
+      this.log("info", "Connect request re-used current driver state", {
+        phase: currentStatus.phase,
+        portPath: selection.selectedPortPath,
+      });
       this.storage.saveDriverStatus(currentStatus);
       return currentStatus;
     }
+    this.log("info", "Connecting controller", {
+      portPath: selection.selectedPortPath,
+      stablePath: selection.selectedStablePath,
+    });
     await this.adapter.connect(selection.selectedPortPath);
     const status = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);
     this.storage.saveControllerSelection({
@@ -65,32 +78,64 @@ export class ZwaveRuntimeService {
       lastStatus: status.phase,
     });
     this.storage.saveDriverStatus(status);
+    this.log("info", "Connect finished", {
+      phase: status.phase,
+      portPath: status.connectedPortPath,
+      hasReadyDriver: status.hasReadyDriver,
+      controllerId: status.controllerId,
+      homeId: status.homeId,
+      lastError: status.lastError,
+    });
     return status;
   }
 
   public async disconnect(): Promise<DriverStatus> {
+    this.log("info", "Disconnecting controller", {
+      portPath: this.storage.getControllerSelection().selectedPortPath,
+    });
     await this.adapter.disconnect();
     const status = this.withSelection(
       await this.adapter.getStatus(),
       this.storage.getControllerSelection().selectedPortPath,
     );
     this.storage.saveDriverStatus(status);
+    this.log("info", "Disconnect finished", {
+      phase: status.phase,
+      portPath: status.connectedPortPath,
+      hasReadyDriver: status.hasReadyDriver,
+    });
     return status;
   }
 
   public async reconnect(): Promise<DriverStatus> {
     const selection = this.storage.getControllerSelection();
     if (!selection.selectedPortPath) {
+      this.log("warn", "Reconnect requested without a selected controller port");
       throw new Error("No controller port has been selected.");
     }
     const currentStatus = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);
     if (currentStatus.phase === "connecting") {
+      this.log("info", "Reconnect request ignored while driver is still connecting", {
+        portPath: selection.selectedPortPath,
+      });
       this.storage.saveDriverStatus(currentStatus);
       return currentStatus;
     }
+    this.log("info", "Reconnecting controller", {
+      portPath: selection.selectedPortPath,
+      stablePath: selection.selectedStablePath,
+    });
     await this.adapter.reconnect(selection.selectedPortPath);
     const status = this.withSelection(await this.adapter.getStatus(), selection.selectedPortPath);
     this.storage.saveDriverStatus(status);
+    this.log("info", "Reconnect finished", {
+      phase: status.phase,
+      portPath: status.connectedPortPath,
+      hasReadyDriver: status.hasReadyDriver,
+      controllerId: status.controllerId,
+      homeId: status.homeId,
+      lastError: status.lastError,
+    });
     return status;
   }
 
@@ -160,5 +205,10 @@ export class ZwaveRuntimeService {
       ...status,
       selectedPortPath: selectedPortPath ?? status.selectedPortPath,
     };
+  }
+
+  private log(level: "info" | "warn" | "error", message: string, meta?: Record<string, unknown>): void {
+    const suffix = meta ? ` ${JSON.stringify(meta)}` : "";
+    console[level](`[zwave-runtime] ${message}${suffix}`);
   }
 }

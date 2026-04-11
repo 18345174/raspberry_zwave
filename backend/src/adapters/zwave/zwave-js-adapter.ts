@@ -62,10 +62,20 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   public async connect(portPath: string): Promise<void> {
     if (this.driver) {
+      this.log("warn", "Connect skipped because driver instance already exists", {
+        portPath,
+        phase: this.status.phase,
+        connectedPortPath: this.status.connectedPortPath,
+      });
       throw new Error("Z-Wave driver is already running.");
     }
 
     const zwave = await this.loadModule();
+    this.log("info", "Creating Z-Wave driver", {
+      portPath,
+      cacheDir: this.appConfig.zwaveCacheDir,
+      deviceConfigDir: this.appConfig.zwaveDeviceConfigDir,
+    });
     const driver = new zwave.Driver(portPath, this.createDriverOptions());
 
     this.driver = driver;
@@ -80,12 +90,18 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.attachDriverEvents(driver, zwave);
 
     try {
+      this.log("info", "Starting Z-Wave driver", { portPath });
       await driver.start();
       this.updateStatus({
         phase: driver.ready ? "ready" : "connecting",
         connectedPortPath: portPath,
         selectedPortPath: portPath,
         hasReadyDriver: Boolean(driver.ready),
+      });
+      this.log("info", "Driver start returned", {
+        portPath,
+        ready: Boolean(driver.ready),
+        phase: this.status.phase,
       });
     } catch (error) {
       await this.safeDestroyDriver();
@@ -95,14 +111,22 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         hasReadyDriver: false,
         lastError: error instanceof Error ? error.message : String(error),
       });
+      this.log("error", "Driver start failed", {
+        portPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
 
   public async disconnect(): Promise<void> {
     if (!this.driver) {
+      this.log("info", "Disconnect skipped because no driver instance exists");
       return;
     }
+    this.log("info", "Destroying Z-Wave driver", {
+      connectedPortPath: this.status.connectedPortPath,
+    });
     this.updateStatus({ phase: "disconnecting" });
     await this.safeDestroyDriver();
     this.updateStatus({
@@ -114,6 +138,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       isInclusionActive: false,
       isExclusionActive: false,
     });
+    this.log("info", "Driver destroyed");
   }
 
   public async reconnect(portPath: string): Promise<void> {
@@ -318,6 +343,9 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
   private attachDriverEvents(driver: any, zwave: ZwaveModule): void {
     driver.on("error", (error: unknown) => {
+      this.log("error", "Driver emitted error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.updateStatus({
         phase: "error",
         hasReadyDriver: false,
@@ -330,6 +358,10 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("driver ready", () => {
+      this.log("info", "Controller reported ready", {
+        controllerId: driver.controller?.ownNodeId,
+        homeId: driver.controller?.homeId != undefined ? `0x${driver.controller.homeId.toString(16)}` : undefined,
+      });
       this.updateStatus({
         phase: "ready",
         hasReadyDriver: true,
@@ -343,6 +375,9 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("all nodes ready", () => {
+      this.log("info", "All nodes ready", {
+        nodeCount: driver.controller?.nodes?.size,
+      });
       this.publish({ type: "zwave.controller.updated", payload: { nodesReady: true } });
     });
 
@@ -351,11 +386,19 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     driver.on("node added", (node: any, result: unknown) => {
+      this.log("info", "Node added", {
+        nodeId: node.id,
+        result,
+      });
       this.updateStatus({ isInclusionActive: false });
       this.publish({ type: "zwave.node.added", payload: { node: this.toNodeDetail(node), result } });
     });
 
     driver.on("node removed", (node: any, reason: unknown) => {
+      this.log("warn", "Node removed", {
+        nodeId: node.id,
+        reason,
+      });
       this.publish({ type: "zwave.node.removed", payload: { nodeId: node.id, reason } });
     });
 
@@ -523,5 +566,10 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.driver = undefined;
     this.pendingInclusionRequests.clear();
     await current.destroy();
+  }
+
+  private log(level: "info" | "warn" | "error", message: string, meta?: Record<string, unknown>): void {
+    const suffix = meta ? ` ${JSON.stringify(meta)}` : "";
+    console[level](`[zwave-adapter] ${message}${suffix}`);
   }
 }
