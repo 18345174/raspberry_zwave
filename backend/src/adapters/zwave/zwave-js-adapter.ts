@@ -342,6 +342,13 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         throttle: "normal",
         deviceConfigPriorityDir: this.appConfig.zwaveDeviceConfigDir,
       },
+      logConfig: {
+        enabled: true,
+        level: "debug",
+        forceConsole: true,
+        logToFile: false,
+        showLogo: false,
+      },
       securityKeys: Object.keys(securityKeys).length > 0 ? securityKeys : undefined,
       emitValueUpdateAfterSetValue: true,
     };
