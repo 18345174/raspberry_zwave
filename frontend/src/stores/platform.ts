@@ -172,7 +172,11 @@ export const usePlatformStore = defineStore("platform", () => {
       void refreshNodes();
     }
 
-    if (nextStatus.phase === "connecting") {
+    if (
+      nextStatus.phase === "connecting" ||
+      nextStatus.isInclusionActive ||
+      nextStatus.isExclusionActive
+    ) {
       startStatusPolling();
     } else {
       stopStatusPolling();
@@ -192,7 +196,11 @@ export const usePlatformStore = defineStore("platform", () => {
         // Ignore transient polling failures while the websocket remains the primary source of truth.
       }
 
-      if (status.value.phase === "connecting") {
+      if (
+        status.value.phase === "connecting" ||
+        status.value.isInclusionActive ||
+        status.value.isExclusionActive
+      ) {
         statusPollTimer = window.setTimeout(poll, 1500);
         return;
       }
@@ -352,6 +360,7 @@ export const usePlatformStore = defineStore("platform", () => {
   async function stopInclusion(): Promise<void> {
     await runAction("停止入网失败", async () => {
       await apiClient.stopInclusion();
+      applyStatus(await apiClient.getStatus());
     });
   }
 
@@ -377,6 +386,7 @@ export const usePlatformStore = defineStore("platform", () => {
   async function stopExclusion(): Promise<void> {
     await runAction("停止排除失败", async () => {
       await apiClient.stopExclusion();
+      applyStatus(await apiClient.getStatus());
     });
   }
 
