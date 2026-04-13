@@ -59,6 +59,7 @@ export const usePlatformStore = defineStore("platform", () => {
   let shouldKeepWebSocket = false;
   let socketReconnectTimer: number | null = null;
   let statusPollTimer: number | null = null;
+  let runPollTimer: number | null = null;
 
   function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -242,6 +243,7 @@ export const usePlatformStore = defineStore("platform", () => {
         runLogs.value = {};
         selectedNode.value = null;
         stopStatusPolling();
+        stopRunPolling();
         connectWebSocket(false);
         return;
       }
@@ -264,6 +266,7 @@ export const usePlatformStore = defineStore("platform", () => {
       runs.value = runsResult.items;
       configItems.value = configResult.items;
       selectedPortPath.value = statusResult.selectedPortPath ?? "";
+      updateRunPolling();
 
       if (runs.value[0]) {
         const logs = await apiClient.getRunLogs(runs.value[0].id);
@@ -363,6 +366,7 @@ export const usePlatformStore = defineStore("platform", () => {
     runLogs.value = {};
     selectedNode.value = null;
     stopStatusPolling();
+    stopRunPolling();
     connectWebSocket(false);
   }
 
@@ -434,6 +438,55 @@ export const usePlatformStore = defineStore("platform", () => {
     }
     window.clearTimeout(statusPollTimer);
     statusPollTimer = null;
+  }
+
+  function hasActiveRun(): boolean {
+    return runs.value.some((run) => run.status === "queued" || run.status === "running");
+  }
+
+  function stopRunPolling(): void {
+    if (runPollTimer == null) {
+      return;
+    }
+    window.clearTimeout(runPollTimer);
+    runPollTimer = null;
+  }
+
+  function startRunPolling(): void {
+    if (runPollTimer != null) {
+      return;
+    }
+
+    const poll = async () => {
+      try {
+        await refreshRuns();
+        const activeRuns = runs.value.filter((run) => run.status === "queued" || run.status === "running");
+        if (activeRuns.length > 0) {
+          await Promise.all(activeRuns.map((run) => loadRunLogs(run.id)));
+        } else if (runs.value[0]) {
+          await loadRunLogs(runs.value[0].id);
+        }
+      } catch {
+        // Ignore transient polling failures while a run is still active.
+      }
+
+      if (hasActiveRun()) {
+        runPollTimer = window.setTimeout(poll, 1500);
+        return;
+      }
+
+      runPollTimer = null;
+    };
+
+    runPollTimer = window.setTimeout(poll, 1500);
+  }
+
+  function updateRunPolling(): void {
+    if (hasActiveRun()) {
+      startRunPolling();
+      return;
+    }
+    stopRunPolling();
   }
 
   function handleEvent(event: AppEvent): void {
@@ -619,6 +672,7 @@ export const usePlatformStore = defineStore("platform", () => {
 
   async function refreshRuns(): Promise<void> {
     runs.value = (await apiClient.listRuns()).items;
+    updateRunPolling();
   }
 
   async function loadRunLogs(runId: string): Promise<void> {

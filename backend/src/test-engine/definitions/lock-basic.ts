@@ -18,11 +18,11 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     key: "lock-basic",
     name: "门锁开关门测试",
     deviceType: "door-lock",
-    version: 6,
+    version: 7,
     enabled: true,
-    description: "先读取门锁当前锁舌状态，先切到相反状态并校验，通过后再切回初始状态；优先等待 boltStatus 上报，超时后主动查询当前状态。",
+    description: "先读取门锁当前锁舌状态，第一步在 10 秒内确认状态切换成功后，才会继续执行第二步恢复；优先等待 boltStatus 上报，超时后主动查询当前状态。",
     inputSchema: {
-      reportTimeoutMs: { type: "number", default: 5000, min: 1000, max: 10000 },
+      reportTimeoutMs: { type: "number", default: 10000, min: 1000, max: 10000 },
     },
   },
   supports(node) {
@@ -31,7 +31,7 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       : { supported: false, reason: "节点未发现 Door Lock CC。" };
   },
   async run(context) {
-    const reportTimeoutMs = Number(context.inputs.reportTimeoutMs ?? 5000);
+    const reportTimeoutMs = Number(context.inputs.reportTimeoutMs ?? 10000);
 
     await context.log("info", "precheck.start", "正在检查门锁状态", {
       reportTimeoutMs,
@@ -78,6 +78,14 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       reportTimeoutMs,
       successMessage: "第一次判定结果：通过",
       failureMessage: "第一次判定结果：失败",
+    });
+
+    await context.log("info", "restore.prepare", `第一次命令已确认通过，开始发送第二次${restoreActionLabel}命令`, {
+      reportTimeoutMs,
+      firstConfirmation: firstResult.confirmation,
+      firstBoltStatus: firstResult.status?.boltStatus ?? firstResult.report?.newValue,
+      restoreTargetMode,
+      restoreExpectedBoltStatus,
     });
 
     const restoreResult = await performDoorLockCommand(context, {
