@@ -7,6 +7,10 @@ import type { NodeSummary, TestDefinition, TestLogRecord } from "../types";
 import { translateRunStatus } from "../utils/ui-text";
 
 const platform = usePlatformStore();
+const doorLockQuickActions = [
+  { id: "lock-unlock-v1", label: "单独开锁" },
+  { id: "lock-lock-v1", label: "单独关锁" },
+] as const;
 
 const selectedNodeId = ref<number | null>(null);
 const selectedDefinitionId = ref("");
@@ -33,6 +37,14 @@ const selectedDefinition = computed(() => {
   return supportedDefinitions.value.find((definition) => definition.id === selectedDefinitionId.value) ?? null;
 });
 
+const hasRunningRun = computed(() => {
+  return platform.runs.some((run) => run.status === "running");
+});
+
+const isDoorLockNode = computed(() => {
+  return selectedNode.value?.commandClasses.includes("Door Lock") ?? false;
+});
+
 const selectedRun = computed(() => {
   if (selectedRunId.value) {
     return platform.runs.find((run) => run.id === selectedRunId.value) ?? null;
@@ -48,7 +60,7 @@ const activeLogs = computed(() => {
 });
 
 const canStartTest = computed(() => {
-  return Boolean(selectedNode.value && selectedDefinition.value && !submitting.value);
+  return Boolean(selectedNode.value && selectedDefinition.value && !submitting.value && !hasRunningRun.value);
 });
 
 function describeNode(node: NodeSummary): string {
@@ -133,7 +145,15 @@ watch(
 );
 
 async function submit(): Promise<void> {
-  if (!selectedNode.value || !selectedDefinition.value) {
+  if (!selectedDefinition.value) {
+    return;
+  }
+
+  await submitByDefinitionId(selectedDefinition.value.id);
+}
+
+async function submitByDefinitionId(definitionId: string): Promise<void> {
+  if (!selectedNode.value) {
     return;
   }
 
@@ -141,10 +161,11 @@ async function submit(): Promise<void> {
   try {
     await platform.runTest({
       nodeId: selectedNode.value.nodeId,
-      testDefinitionId: selectedDefinition.value.id,
+      testDefinitionId: definitionId,
       inputs: {},
     });
 
+    selectedDefinitionId.value = definitionId;
     selectedRunId.value = platform.runs[0]?.id ?? "";
   } finally {
     submitting.value = false;
@@ -210,6 +231,25 @@ async function submit(): Promise<void> {
         当前设备暂无可执行的自动测试。
       </p>
 
+      <div v-if="isDoorLockNode" class="quick-action-card">
+        <div>
+          <p class="section-kicker">快速控制</p>
+          <h4>单独执行开锁 / 关锁</h4>
+          <p>直接发送单次门锁命令，并校验最终锁舌状态，方便快速验证门锁响应。</p>
+        </div>
+        <div class="button-row">
+          <button
+            v-for="action in doorLockQuickActions"
+            :key="action.id"
+            class="ghost-button"
+            :disabled="submitting || hasRunningRun || !selectedNode"
+            @click="submitByDefinitionId(action.id)"
+          >
+            {{ action.label }}
+          </button>
+        </div>
+      </div>
+
       <button class="primary-button" :disabled="!canStartTest" @click="submit">启动测试</button>
     </section>
 
@@ -268,6 +308,7 @@ async function submit(): Promise<void> {
 
 <style scoped>
 .device-brief-card,
+.quick-action-card,
 .definition-card,
 .log-entry {
   border: 1px solid var(--line);
@@ -300,8 +341,18 @@ async function submit(): Promise<void> {
   border-radius: 18px;
 }
 
+.quick-action-card {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 18px;
+}
+
 .definition-card h4,
-.definition-card p {
+.definition-card p,
+.quick-action-card h4,
+.quick-action-card p {
   margin: 0;
 }
 
