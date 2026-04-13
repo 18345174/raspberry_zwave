@@ -32,6 +32,16 @@ function expectedBoltStatus(targetMode: DoorLockMode): "locked" | "unlocked" {
   return targetMode === DoorLockMode.Unsecured ? "unlocked" : "locked";
 }
 
+function describeBoltStatus(status: string | undefined): string {
+  if (status === "locked") {
+    return "已关锁";
+  }
+  if (status === "unlocked") {
+    return "已开锁";
+  }
+  return status ?? "未知";
+}
+
 export const lockBasicDefinition: ExecutableTestDefinition = {
   traceCommandClasses: ["Door Lock"],
   meta: {
@@ -76,7 +86,11 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     const firstExpectedBoltStatus = expectedBoltStatus(firstTargetMode);
     const restoreExpectedBoltStatus = expectedBoltStatus(restoreTargetMode);
 
-    await context.log("info", "precheck", "Door Lock CC precheck complete", {
+    await context.log("info", "precheck.start", "正在检查门锁状态", {
+      reportTimeoutMs,
+    });
+
+    await context.log("info", "precheck.current", `当前门锁状态：${describeBoltStatus(initialBoltStatus)}`, {
       initialStatus,
       capabilities,
       reportTimeoutMs,
@@ -97,7 +111,7 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
         String(payload.prevValue ?? "") !== firstExpectedBoltStatus,
     });
 
-    await context.log("info", "toggle.command", `下发门锁${firstActionLabel}命令`, {
+    await context.log("info", "toggle.command", `发送第一次命令：${firstActionLabel}`, {
       targetMode: firstTargetMode,
       expectedBoltStatus: firstExpectedBoltStatus,
     });
@@ -107,26 +121,37 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       args: [firstTargetMode],
     });
 
-    const firstReport = await firstReportPromise;
-
-    await context.log("info", "toggle.report", `已在 ${reportTimeoutMs}ms 内收到门锁${firstActionLabel}后的 boltStatus 上报`, firstReport);
-
-    const toggledStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as {
+    let firstReport: Record<string, unknown>;
+    let toggledStatus: {
       currentMode?: number;
       targetMode?: number;
       boltStatus?: string;
     } | undefined;
-    if (toggledStatus?.boltStatus !== firstExpectedBoltStatus) {
-      throw new Error(`门锁${firstActionLabel}后 boltStatus 校验失败。`);
-    }
-    if (!isModeMatched(toggledStatus.currentMode, firstTargetMode)) {
-      throw new Error(`门锁${firstActionLabel}后 currentMode 校验失败。`);
-    }
+    try {
+      firstReport = await firstReportPromise;
 
-    await context.log("info", "toggle.assert", `门锁${firstActionLabel}状态校验通过`, {
-      ...toggledStatus,
-      boltStatus: firstReport.newValue,
-    });
+      await context.log("info", "toggle.report", `第一次命令收到目标上报：${describeBoltStatus(String(firstReport.newValue ?? ""))}`, firstReport);
+
+      toggledStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as {
+        currentMode?: number;
+        targetMode?: number;
+        boltStatus?: string;
+      } | undefined;
+      if (toggledStatus?.boltStatus !== firstExpectedBoltStatus) {
+        throw new Error(`门锁${firstActionLabel}后 boltStatus 校验失败。`);
+      }
+      if (!isModeMatched(toggledStatus.currentMode, firstTargetMode)) {
+        throw new Error(`门锁${firstActionLabel}后 currentMode 校验失败。`);
+      }
+
+      await context.log("info", "toggle.assert", "第一次判定结果：通过", {
+        ...toggledStatus,
+        boltStatus: firstReport.newValue,
+      });
+    } catch (error) {
+      await context.log("error", "toggle.assert", `第一次判定结果：失败（${error instanceof Error ? error.message : String(error)}）`);
+      throw error;
+    }
 
     const restoreReportPromise = context.waitForValueUpdate({
       commandClass: "Door Lock",
@@ -137,7 +162,7 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
         String(payload.prevValue ?? "") !== restoreExpectedBoltStatus,
     });
 
-    await context.log("info", "restore.command", `下发门锁${restoreActionLabel}命令，恢复初始状态`, {
+    await context.log("info", "restore.command", `发送第二次命令：${restoreActionLabel}`, {
       targetMode: restoreTargetMode,
       expectedBoltStatus: restoreExpectedBoltStatus,
     });
@@ -147,25 +172,42 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       args: [restoreTargetMode],
     });
 
-    const restoreReport = await restoreReportPromise;
-
-    await context.log("info", "restore.report", `已在 ${reportTimeoutMs}ms 内收到门锁${restoreActionLabel}后的 boltStatus 上报`, restoreReport);
-
-    const finalStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as {
+    let restoreReport: Record<string, unknown>;
+    let finalStatus: {
       currentMode?: number;
       targetMode?: number;
       boltStatus?: string;
     } | undefined;
-    if (finalStatus?.boltStatus !== restoreExpectedBoltStatus) {
-      throw new Error("门锁恢复初始状态 boltStatus 校验失败。");
-    }
-    if (!isModeMatched(finalStatus.currentMode, restoreTargetMode)) {
-      throw new Error("门锁恢复初始状态 currentMode 校验失败。");
+    try {
+      restoreReport = await restoreReportPromise;
+
+      await context.log("info", "restore.report", `第二次命令收到目标上报：${describeBoltStatus(String(restoreReport.newValue ?? ""))}`, restoreReport);
+
+      finalStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as {
+        currentMode?: number;
+        targetMode?: number;
+        boltStatus?: string;
+      } | undefined;
+      if (finalStatus?.boltStatus !== restoreExpectedBoltStatus) {
+        throw new Error("门锁恢复初始状态 boltStatus 校验失败。");
+      }
+      if (!isModeMatched(finalStatus.currentMode, restoreTargetMode)) {
+        throw new Error("门锁恢复初始状态 currentMode 校验失败。");
+      }
+
+      await context.log("info", "restore.assert", "第二次判定结果：通过", {
+        ...finalStatus,
+        boltStatus: restoreReport.newValue,
+      });
+    } catch (error) {
+      await context.log("error", "restore.assert", `第二次判定结果：失败（${error instanceof Error ? error.message : String(error)}）`);
+      throw error;
     }
 
-    await context.log("info", "restore.assert", "门锁恢复初始状态校验通过", {
-      ...finalStatus,
-      boltStatus: restoreReport.newValue,
+    await context.log("info", "result", "最终测试结果：通过", {
+      initialBoltStatus,
+      firstBoltStatus: firstReport.newValue,
+      finalBoltStatus: restoreReport.newValue,
     });
 
     const refreshed = await context.refreshNode();

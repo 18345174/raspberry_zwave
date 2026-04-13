@@ -148,6 +148,10 @@ export class TestEngineService {
     run.startedAt = nowIso();
     this.storage.updateTestRun(run);
     this.eventBus.publish({ type: "test.run.started", timestamp: nowIso(), payload: run });
+    console.info(`[test-engine] [run:${runId}] 已开始执行测试`, JSON.stringify({
+      nodeId: run.nodeId,
+      testDefinitionId: run.testDefinitionId,
+    }));
 
     try {
       let currentNode = await this.requireNode(run.nodeId);
@@ -168,6 +172,8 @@ export class TestEngineService {
           };
           this.storage.appendTestLog(log);
           this.eventBus.publish({ type: "test.run.log", timestamp: log.timestamp, payload: log });
+          const suffix = payload ? ` ${JSON.stringify(payload)}` : "";
+          console[level](`[test-engine] [run:${runId}] [${stepKey}] ${message}${suffix}`);
         },
         refreshNode: async () => {
           currentNode = await this.nodeRegistry.refreshNode(run.nodeId);
@@ -254,6 +260,10 @@ export class TestEngineService {
         testDefinitionId: run.testDefinitionId,
       };
       run.resultJson = result;
+      console.info(`[test-engine] [run:${runId}] 最终测试结果：通过`, JSON.stringify({
+        nodeId: run.nodeId,
+        testDefinitionId: run.testDefinitionId,
+      }));
     } catch (error) {
       run.status = this.cancellationFlags.has(runId) ? "cancelled" : "failed";
       run.finishedAt = nowIso();
@@ -265,6 +275,9 @@ export class TestEngineService {
       run.resultJson = {
         error: error instanceof Error ? error.message : String(error),
       };
+      console[run.status === "cancelled" ? "warn" : "error"](
+        `[test-engine] [run:${runId}] 最终测试结果：${run.status === "cancelled" ? "已取消" : "失败"} ${error instanceof Error ? error.message : String(error)}`,
+      );
     } finally {
       this.cancellationFlags.delete(runId);
       this.activeRunId = undefined;
@@ -308,6 +321,7 @@ export class TestEngineService {
     };
     this.storage.updateTestRun(run);
     this.eventBus.publish({ type: "test.run.finished", timestamp: nowIso(), payload: run });
+    console.warn(`[test-engine] [run:${run.id}] 最终测试结果：已取消 ${reason}`);
   }
 
   private matchesValueUpdatePayload(
