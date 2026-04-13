@@ -3,21 +3,40 @@ import { computed, ref, watch } from "vue";
 
 import { apiClient } from "../api/client";
 import { usePlatformStore } from "../stores/platform";
-import type { NodeSummary, TestDefinition, TestLogRecord } from "../types";
+import type { NodeSummary, TestDefinition, TestLogRecord, TestRunRecord } from "../types";
 import { translateRunStatus } from "../utils/ui-text";
 
-const platform = usePlatformStore();
-const doorLockQuickActions = [
-  { id: "lock-unlock-v1", label: "单独开锁" },
-  { id: "lock-lock-v1", label: "单独关锁" },
-] as const;
+type TestPageStage = "devices" | "definitions" | "execution";
+type ExecutionStatus = TestRunRecord["status"] | "pending";
+type StepState = "pending" | "running" | "passed" | "failed";
 
+interface ExecutionItem {
+  definition: TestDefinition;
+  runId?: string;
+  status: ExecutionStatus;
+  expanded: boolean;
+}
+
+interface DeviceSupportRecord {
+  node: NodeSummary;
+  definitions: TestDefinition[];
+}
+
+const TERMINAL_STATUSES = new Set<TestRunRecord["status"]>(["passed", "failed", "cancelled"]);
+
+const platform = usePlatformStore();
+
+const pageStage = ref<TestPageStage>("devices");
 const selectedNodeId = ref<number | null>(null);
-const selectedDefinitionId = ref("");
-const selectedRunId = ref("");
-const supportedDefinitions = ref<TestDefinition[]>([]);
-const loadingSupportedDefinitions = ref(false);
-const submitting = ref(false);
+const selectedDefinitionIds = ref<string[]>([]);
+const supportedDefinitionMap = ref<Record<number, TestDefinition[]>>({});
+const loadingDeviceMatrix = ref(false);
+const executionItems = ref<ExecutionItem[]>([]);
+const executionBusy = ref(false);
+const executionError = ref("");
+const currentExecutionRunId = ref("");
+const executionToken = ref(0);
+let supportLoadToken = 0;
 
 const runnableNodes = computed(() => {
   return [...platform.nodes]
@@ -25,414 +44,897 @@ const runnableNodes = computed(() => {
     .sort((left, right) => left.nodeId - right.nodeId);
 });
 
-const definitionMap = computed(() => {
-  return new Map(platform.definitions.map((definition) => [definition.id, definition]));
-});
-
 const selectedNode = computed(() => {
   return runnableNodes.value.find((node) => node.nodeId === selectedNodeId.value) ?? null;
 });
 
-const selectedDefinition = computed(() => {
-  return supportedDefinitions.value.find((definition) => definition.id === selectedDefinitionId.value) ?? null;
-});
-
-const hasRunningRun = computed(() => {
-  return platform.runs.some((run) => run.status === "running");
-});
-
-const isDoorLockNode = computed(() => {
-  return selectedNode.value?.commandClasses.includes("Door Lock") ?? false;
-});
-
-const selectedRun = computed(() => {
-  if (selectedRunId.value) {
-    return platform.runs.find((run) => run.id === selectedRunId.value) ?? null;
-  }
-  return platform.runs[0] ?? null;
-});
-
-const activeLogs = computed(() => {
-  if (!selectedRun.value) {
+const selectedNodeDefinitions = computed(() => {
+  if (!selectedNodeId.value) {
     return [];
   }
-  return platform.runLogs[selectedRun.value.id] ?? [];
+  return supportedDefinitionMap.value[selectedNodeId.value] ?? [];
 });
 
-const canStartTest = computed(() => {
-  return Boolean(selectedNode.value && selectedDefinition.value && !submitting.value && !hasRunningRun.value);
+const selectedDefinitions = computed(() => {
+  return selectedNodeDefinitions.value.filter((definition) => selectedDefinitionIds.value.includes(definition.id));
 });
+
+const hasBlockingRun = computed(() => {
+  return platform.runs.some((run) => run.status === "queued" || run.status === "running");
+});
+
+const testableDevices = computed<DeviceSupportRecord[]>(() => {
+  return runnableNodes.value
+    .map((node) => ({
+      node,
+      definitions: supportedDefinitionMap.value[node.nodeId] ?? [],
+    }))
+    .filter((item) => item.definitions.length > 0);
+});
+
+const completedExecutionCount = computed(() => {
+  return executionItems.value.filter((item) => TERMINAL_STATUSES.has(getExecutionItemStatus(item) as TestRunRecord["status"])).length;
+});
+
+const passedExecutionCount = computed(() => {
+  return executionItems.value.filter((item) => getExecutionItemStatus(item) === "passed").length;
+});
+
+const progressPercent = computed(() => {
+  if (!executionItems.value.length) {
+    return 0;
+  }
+  return Math.round((completedExecutionCount.value / executionItems.value.length) * 100);
+});
+
+const overallExecutionStatus = computed<ExecutionStatus>(() => {
+  if (!executionItems.value.length) {
+    return "pending";
+  }
+  if (executionBusy.value || executionItems.value.some((item) => {
+    const status = getExecutionItemStatus(item);
+    return status === "queued" || status === "running";
+  })) {
+    return "running";
+  }
+  if (executionItems.value.some((item) => getExecutionItemStatus(item) === "failed")) {
+    return "failed";
+  }
+  if (executionItems.value.some((item) => getExecutionItemStatus(item) === "cancelled")) {
+    return "cancelled";
+  }
+  if (executionItems.value.every((item) => getExecutionItemStatus(item) === "passed")) {
+    return "passed";
+  }
+  return "pending";
+});
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function describeNode(node: NodeSummary): string {
   return node.product || node.name || node.manufacturer || `节点 ${node.nodeId}`;
 }
 
-function resolveDefinitionName(definitionId: string): string {
-  return definitionMap.value.get(definitionId)?.name ?? definitionId;
-}
-
-function resolveRunNode(runNodeId: number): NodeSummary | undefined {
-  return platform.nodes.find((node) => node.nodeId === runNodeId);
+function formatDefinitionList(definitions: TestDefinition[]): string {
+  return definitions.map((definition) => definition.name).join(" / ");
 }
 
 function formatLogPayload(log: TestLogRecord): string {
   return log.payloadJson ? JSON.stringify(log.payloadJson, null, 2) : "";
 }
 
-watch(
-  runnableNodes,
-  (nodes) => {
-    if (!nodes.length) {
-      selectedNodeId.value = null;
-      selectedDefinitionId.value = "";
-      supportedDefinitions.value = [];
-      return;
-    }
-
-    if (!nodes.some((node) => node.nodeId === selectedNodeId.value)) {
-      selectedNodeId.value = nodes[0]?.nodeId ?? null;
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  selectedNodeId,
-  async (nodeId) => {
-    selectedDefinitionId.value = "";
-    supportedDefinitions.value = [];
-
-    if (!nodeId) {
-      return;
-    }
-
-    loadingSupportedDefinitions.value = true;
-    try {
-      supportedDefinitions.value = (await apiClient.listSupportedDefinitions(nodeId)).items;
-      if (supportedDefinitions.value.length === 1) {
-        selectedDefinitionId.value = supportedDefinitions.value[0]?.id ?? "";
-      }
-    } finally {
-      loadingSupportedDefinitions.value = false;
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  () => platform.runs,
-  (runs) => {
-    if (!runs.length) {
-      selectedRunId.value = "";
-      return;
-    }
-
-    if (!runs.some((run) => run.id === selectedRunId.value)) {
-      selectedRunId.value = runs[0]?.id ?? "";
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  selectedRun,
-  async (run) => {
-    if (run && !platform.runLogs[run.id]) {
-      await platform.loadRunLogs(run.id);
-    }
-  },
-  { immediate: true },
-);
-
-async function submit(): Promise<void> {
-  if (!selectedDefinition.value) {
-    return;
+function translateExecutionStatus(status: ExecutionStatus): string {
+  if (status === "pending") {
+    return "待执行";
   }
-
-  await submitByDefinitionId(selectedDefinition.value.id);
+  return translateRunStatus(status);
 }
 
-async function submitByDefinitionId(definitionId: string): Promise<void> {
-  if (!selectedNode.value) {
+function getExecutionItemStatus(item: ExecutionItem): ExecutionStatus {
+  if (!item.runId) {
+    return item.status;
+  }
+  const liveRun = platform.runs.find((run) => run.id === item.runId);
+  return liveRun?.status ?? item.status;
+}
+
+function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
+  if (!item.runId) {
+    return [];
+  }
+  return platform.runLogs[item.runId] ?? [];
+}
+
+function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord[]): StepState {
+  const log = logs[index];
+  if (log?.level === "error") {
+    return "failed";
+  }
+  if (index === logs.length - 1) {
+    const status = getExecutionItemStatus(item);
+    if (status === "running" || status === "queued") {
+      return "running";
+    }
+  }
+  return "passed";
+}
+
+function getPlaceholderStepState(item: ExecutionItem): StepState {
+  const status = getExecutionItemStatus(item);
+  if (status === "failed" || status === "cancelled") {
+    return "failed";
+  }
+  if (status === "running" || status === "queued") {
+    return "running";
+  }
+  return "pending";
+}
+
+function getPlaceholderStepMessage(item: ExecutionItem): string {
+  const status = getExecutionItemStatus(item);
+  if (status === "pending") {
+    return "等待开始执行";
+  }
+  if (status === "queued") {
+    return "任务已创建，等待后端开始执行";
+  }
+  if (status === "running") {
+    return "正在执行，请稍候...";
+  }
+  if (status === "cancelled") {
+    return "测试已取消";
+  }
+  if (status === "failed") {
+    return "测试失败，等待日志同步";
+  }
+  return "测试完成";
+}
+
+function toggleDefinition(definitionId: string): void {
+  if (selectedDefinitionIds.value.includes(definitionId)) {
+    selectedDefinitionIds.value = selectedDefinitionIds.value.filter((item) => item !== definitionId);
+    return;
+  }
+  selectedDefinitionIds.value = [...selectedDefinitionIds.value, definitionId];
+}
+
+function toggleExecutionItem(index: number): void {
+  executionItems.value[index] = {
+    ...executionItems.value[index],
+    expanded: !executionItems.value[index]?.expanded,
+  };
+}
+
+function openDefinitionSelector(nodeId: number): void {
+  selectedNodeId.value = nodeId;
+  selectedDefinitionIds.value = [];
+  executionItems.value = [];
+  executionError.value = "";
+  pageStage.value = "definitions";
+}
+
+function backToDeviceList(): void {
+  if (executionBusy.value) {
+    return;
+  }
+  selectedDefinitionIds.value = [];
+  executionItems.value = [];
+  executionError.value = "";
+  pageStage.value = "devices";
+}
+
+function backToDefinitionSelector(): void {
+  if (executionBusy.value) {
+    return;
+  }
+  executionItems.value = [];
+  executionError.value = "";
+  pageStage.value = "definitions";
+}
+
+async function refreshSupportedDefinitions(): Promise<void> {
+  const nodes = runnableNodes.value;
+  if (!nodes.length) {
+    supportedDefinitionMap.value = {};
     return;
   }
 
-  submitting.value = true;
+  const currentToken = ++supportLoadToken;
+  loadingDeviceMatrix.value = true;
   try {
-    await platform.runTest({
-      nodeId: selectedNode.value.nodeId,
-      testDefinitionId: definitionId,
-      inputs: {},
-    });
+    const results: Array<[number, TestDefinition[]]> = await Promise.all(nodes.map(async (node) => {
+      try {
+        const response = await apiClient.listSupportedDefinitions(node.nodeId);
+        return [node.nodeId, response.items];
+      } catch {
+        return [node.nodeId, []];
+      }
+    }));
 
-    selectedDefinitionId.value = definitionId;
-    selectedRunId.value = platform.runs[0]?.id ?? "";
+    if (currentToken !== supportLoadToken) {
+      return;
+    }
+
+    supportedDefinitionMap.value = Object.fromEntries(results.map(([nodeId, definitions]) => [nodeId, definitions]));
   } finally {
-    submitting.value = false;
+    if (currentToken === supportLoadToken) {
+      loadingDeviceMatrix.value = false;
+    }
+  }
+}
+
+watch(
+  runnableNodes,
+  async () => {
+    await refreshSupportedDefinitions();
+  },
+  { immediate: true },
+);
+
+watch(
+  selectedNodeDefinitions,
+  (definitions) => {
+    const allowedIds = new Set(definitions.map((definition) => definition.id));
+    selectedDefinitionIds.value = selectedDefinitionIds.value.filter((id) => allowedIds.has(id));
+
+    if (pageStage.value !== "devices" && selectedNodeId.value && definitions.length === 0) {
+      pageStage.value = "devices";
+    }
+  },
+  { immediate: true },
+);
+
+async function waitForRunCompletion(runId: string, token: number): Promise<TestRunRecord> {
+  while (token === executionToken.value) {
+    const liveRun = platform.runs.find((run) => run.id === runId);
+    if (liveRun && TERMINAL_STATUSES.has(liveRun.status)) {
+      await platform.loadRunLogs(runId);
+      return liveRun;
+    }
+
+    await sleep(1000);
+    await platform.refreshRuns();
+    await platform.loadRunLogs(runId);
+  }
+
+  await platform.refreshRuns();
+  const interruptedRun = platform.runs.find((run) => run.id === runId);
+  if (interruptedRun && TERMINAL_STATUSES.has(interruptedRun.status)) {
+    await platform.loadRunLogs(runId);
+    return interruptedRun;
+  }
+
+  throw new Error("测试流程已停止。");
+}
+
+async function startSelectedTests(): Promise<void> {
+  if (!selectedNode.value || !selectedDefinitions.value.length || hasBlockingRun.value) {
+    return;
+  }
+
+  executionError.value = "";
+  executionBusy.value = true;
+  currentExecutionRunId.value = "";
+  executionToken.value += 1;
+  const token = executionToken.value;
+
+  executionItems.value = selectedDefinitions.value.map((definition, index) => ({
+    definition,
+    status: "pending",
+    expanded: index === 0,
+  }));
+  pageStage.value = "execution";
+
+  try {
+    for (let index = 0; index < executionItems.value.length; index += 1) {
+      if (token !== executionToken.value) {
+        break;
+      }
+
+      executionItems.value = executionItems.value.map((item, itemIndex) => ({
+        ...item,
+        expanded: itemIndex === index ? true : item.expanded,
+      }));
+
+      const currentItem = executionItems.value[index];
+      currentItem.status = "queued";
+
+      let run: TestRunRecord;
+      try {
+        run = await apiClient.createRun({
+          nodeId: selectedNode.value.nodeId,
+          testDefinitionId: currentItem.definition.id,
+          inputs: {},
+        });
+      } catch (error) {
+        currentItem.status = "failed";
+        executionError.value = getErrorMessage(error);
+        break;
+      }
+
+      currentItem.runId = run.id;
+      currentItem.status = run.status;
+      currentExecutionRunId.value = run.id;
+
+      await platform.refreshRuns();
+      await platform.loadRunLogs(run.id);
+
+      const finalRun = await waitForRunCompletion(run.id, token);
+      currentItem.status = finalRun.status;
+      currentExecutionRunId.value = "";
+
+      if (finalRun.status === "cancelled") {
+        executionError.value = "测试流程已取消。";
+        break;
+      }
+    }
+  } catch (error) {
+    executionError.value = getErrorMessage(error);
+  } finally {
+    executionBusy.value = false;
+    currentExecutionRunId.value = "";
+    await platform.refreshRuns();
+  }
+}
+
+async function cancelExecution(): Promise<void> {
+  executionToken.value += 1;
+  executionBusy.value = false;
+
+  if (currentExecutionRunId.value) {
+    await platform.cancelRun(currentExecutionRunId.value);
+    currentExecutionRunId.value = "";
   }
 }
 </script>
 
 <template>
-  <div class="page-grid split-wide">
-    <section class="page-card">
-      <div class="section-heading">
+  <div class="page-grid page-grid-single tests-page-grid">
+    <section class="page-card tests-shell-card">
+      <div class="section-heading section-heading-tight">
         <div>
-          <p class="section-kicker">测试配置</p>
-          <h3>选择设备并执行测试</h3>
+          <p class="section-kicker">测试中心</p>
+          <h3 v-if="pageStage === 'devices'">可测试设备列表</h3>
+          <h3 v-else-if="pageStage === 'definitions'">选择测试项目</h3>
+          <h3 v-else>测试执行详情</h3>
         </div>
-      </div>
 
-      <label class="field-stack">
-        <span>测试设备</span>
-        <select v-model="selectedNodeId" class="text-input">
-          <option :value="null">请选择设备</option>
-          <option v-for="node in runnableNodes" :key="node.nodeId" :value="node.nodeId">
-            #{{ node.nodeId }} {{ describeNode(node) }}
-          </option>
-        </select>
-      </label>
-
-      <div v-if="selectedNode" class="device-brief-card">
-        <div>
-          <dt>设备名称</dt>
-          <dd>{{ describeNode(selectedNode) }}</dd>
-        </div>
-        <div>
-          <dt>设备类型</dt>
-          <dd>{{ selectedNode.deviceType || "未识别" }}</dd>
-        </div>
-        <div>
-          <dt>制造商</dt>
-          <dd>{{ selectedNode.manufacturer || "-" }}</dd>
-        </div>
-        <div>
-          <dt>命令类</dt>
-          <dd>{{ selectedNode.commandClasses.join(" / ") || "-" }}</dd>
-        </div>
-      </div>
-
-      <label class="field-stack">
-        <span>测试功能</span>
-        <select v-model="selectedDefinitionId" class="text-input" :disabled="loadingSupportedDefinitions || !selectedNode">
-          <option value="">{{ loadingSupportedDefinitions ? "正在加载可用测试..." : "请选择测试功能" }}</option>
-          <option v-for="definition in supportedDefinitions" :key="definition.id" :value="definition.id">
-            {{ definition.name }}
-          </option>
-        </select>
-      </label>
-
-      <div v-if="selectedDefinition" class="definition-card">
-        <p class="definition-tag">{{ selectedDefinition.deviceType }}</p>
-        <h4>{{ selectedDefinition.name }}</h4>
-        <p>{{ selectedDefinition.description }}</p>
-      </div>
-      <p v-else-if="selectedNode && !loadingSupportedDefinitions" class="empty-state">
-        当前设备暂无可执行的自动测试。
-      </p>
-
-      <div v-if="isDoorLockNode" class="quick-action-card">
-        <div>
-          <p class="section-kicker">快速控制</p>
-          <h4>单独执行开锁 / 关锁</h4>
-          <p>直接发送单次门锁命令，并校验最终锁舌状态，方便快速验证门锁响应。</p>
-        </div>
         <div class="button-row">
-          <button
-            v-for="action in doorLockQuickActions"
-            :key="action.id"
-            class="ghost-button"
-            :disabled="submitting || hasRunningRun || !selectedNode"
-            @click="submitByDefinitionId(action.id)"
-          >
-            {{ action.label }}
+          <button v-if="pageStage !== 'devices'" class="ghost-button" :disabled="executionBusy" @click="backToDeviceList">
+            返回设备列表
+          </button>
+          <button v-if="pageStage === 'execution'" class="ghost-button" :disabled="executionBusy" @click="backToDefinitionSelector">
+            重新选择测试项
+          </button>
+          <button v-if="pageStage === 'execution' && executionBusy" class="ghost-button danger" @click="cancelExecution">
+            取消当前测试
           </button>
         </div>
       </div>
 
-      <button class="primary-button" :disabled="!canStartTest" @click="submit">启动测试</button>
-    </section>
+      <div v-if="pageStage === 'devices'" class="stage-panel">
+        <p class="panel-intro">进入测试页面后，先从可测试设备中选择目标设备，再进入测试项选择页面。</p>
+        <p v-if="hasBlockingRun" class="warning-banner">当前已有测试任务正在执行，请等待完成后再启动新的测试。</p>
+        <p v-if="loadingDeviceMatrix" class="empty-state">正在加载设备支持的测试项目...</p>
 
-    <section class="page-card accent-card">
-      <div class="section-heading">
-        <div>
-          <p class="section-kicker">执行记录</p>
-          <h3>任务与日志</h3>
+        <div v-else-if="testableDevices.length" class="device-table">
+          <div class="device-table-row device-table-head">
+            <span>节点 ID</span>
+            <span>名称</span>
+            <span>设备类型</span>
+            <span>制造商</span>
+            <span>支持的测试</span>
+            <span>操作</span>
+          </div>
+
+          <div v-for="item in testableDevices" :key="item.node.nodeId" class="device-table-row">
+            <span>#{{ item.node.nodeId }}</span>
+            <span>{{ describeNode(item.node) }}</span>
+            <span>{{ item.node.deviceType || '未识别' }}</span>
+            <span>{{ item.node.manufacturer || '-' }}</span>
+            <span class="device-tests">{{ formatDefinitionList(item.definitions) }}</span>
+            <span>
+              <button class="primary-button compact-button" :disabled="hasBlockingRun" @click="openDefinitionSelector(item.node.nodeId)">
+                测试
+              </button>
+            </span>
+          </div>
         </div>
+
+        <p v-else class="empty-state">当前没有可执行自动测试的设备，请先确认设备已完成采访并支持对应命令类。</p>
       </div>
 
-      <div class="list-column compact run-list">
-        <button
-          v-for="run in platform.runs"
-          :key="run.id"
-          class="list-card run-card"
-          :data-active="run.id === selectedRun?.id"
-          @click="selectedRunId = run.id"
-        >
+      <div v-else-if="pageStage === 'definitions' && selectedNode" class="stage-panel stage-panel-narrow">
+        <div class="selection-summary-card">
           <div>
-            <strong>{{ resolveDefinitionName(run.testDefinitionId) }}</strong>
-            <p>#{{ run.nodeId }} {{ describeNode(resolveRunNode(run.nodeId) || { nodeId: run.nodeId, securityClasses: [], isSecure: false, isListening: false, commandClasses: [] }) }}</p>
+            <p class="section-kicker">目标设备</p>
+            <h4>#{{ selectedNode.nodeId }} {{ describeNode(selectedNode) }}</h4>
           </div>
-          <span>{{ translateRunStatus(run.status) }}</span>
-        </button>
-      </div>
-
-      <div v-if="selectedRun" class="run-summary run-summary-block">
-        <div>
-          <p class="mono-line">当前任务：{{ selectedRun.id }}</p>
-          <p class="mono-line">测试项：{{ resolveDefinitionName(selectedRun.testDefinitionId) }}</p>
+          <div class="selection-summary-meta">
+            <span>设备类型：{{ selectedNode.deviceType || '未识别' }}</span>
+            <span>制造商：{{ selectedNode.manufacturer || '-' }}</span>
+          </div>
         </div>
-        <button
-          class="ghost-button danger"
-          :disabled="selectedRun.status !== 'running'"
-          @click="platform.cancelRun(selectedRun.id)"
-        >
-          取消任务
-        </button>
+
+        <p class="panel-intro">可选择一个或多个测试项目，开始后会按选择顺序依次执行。</p>
+        <p v-if="hasBlockingRun" class="warning-banner">当前已有测试任务正在执行，请等待当前任务结束后再开始。</p>
+
+        <div class="definition-checklist">
+          <label v-for="definition in selectedNodeDefinitions" :key="definition.id" class="definition-option">
+            <input :checked="selectedDefinitionIds.includes(definition.id)" type="checkbox" @change="toggleDefinition(definition.id)" />
+            <div>
+              <div class="definition-option-title-row">
+                <strong>{{ definition.name }}</strong>
+                <span class="definition-chip">{{ definition.deviceType }}</span>
+              </div>
+              <p>{{ definition.description }}</p>
+            </div>
+          </label>
+        </div>
+
+        <div class="action-footer">
+          <p class="empty-state">已选择 {{ selectedDefinitions.length }} 项测试</p>
+          <button class="primary-button" :disabled="!selectedDefinitions.length || hasBlockingRun || executionBusy" @click="startSelectedTests">
+            开始测试
+          </button>
+        </div>
       </div>
 
-      <div v-if="activeLogs.length" class="log-stream">
-        <article v-for="log in activeLogs" :key="log.id" class="log-entry" :data-level="log.level">
-          <div class="log-entry-header">
-            <strong>{{ log.message }}</strong>
-            <span>{{ new Date(log.timestamp).toLocaleTimeString() }}</span>
+      <div v-else-if="pageStage === 'execution' && selectedNode" class="stage-panel execution-panel">
+        <div class="execution-header-card">
+          <div>
+            <p class="section-kicker">总测试标题</p>
+            <h4>#{{ selectedNode.nodeId }} {{ describeNode(selectedNode) }}</h4>
+            <p class="execution-subtitle">共 {{ executionItems.length }} 项测试，已完成 {{ completedExecutionCount }} 项，通过 {{ passedExecutionCount }} 项。</p>
           </div>
-          <p class="log-step">{{ log.stepKey }}</p>
-          <pre v-if="log.payloadJson" class="code-block log-payload">{{ formatLogPayload(log) }}</pre>
-        </article>
+          <div class="execution-header-side">
+            <span class="status-pill" :data-tone="overallExecutionStatus === 'passed' ? 'good' : overallExecutionStatus === 'failed' || overallExecutionStatus === 'cancelled' ? 'bad' : overallExecutionStatus === 'running' ? 'warn' : undefined">
+              {{ translateExecutionStatus(overallExecutionStatus) }}
+            </span>
+            <strong>{{ progressPercent }}%</strong>
+          </div>
+        </div>
+
+        <div class="progress-track">
+          <div class="progress-fill" :style="{ width: `${progressPercent}%` }"></div>
+        </div>
+
+        <p v-if="executionError" class="warning-banner warning-banner-error">{{ executionError }}</p>
+
+        <div class="execution-list">
+          <article v-for="(item, index) in executionItems" :key="item.definition.id" class="execution-item" :data-status="getExecutionItemStatus(item)">
+            <button class="execution-item-header" @click="toggleExecutionItem(index)">
+              <div class="execution-item-header-main">
+                <span class="execution-order">{{ index + 1 }}</span>
+                <div>
+                  <strong>{{ item.definition.name }}</strong>
+                  <p>{{ item.definition.description }}</p>
+                </div>
+              </div>
+              <div class="execution-item-header-side">
+                <span class="status-pill" :data-tone="getExecutionItemStatus(item) === 'passed' ? 'good' : getExecutionItemStatus(item) === 'failed' || getExecutionItemStatus(item) === 'cancelled' ? 'bad' : getExecutionItemStatus(item) === 'running' || getExecutionItemStatus(item) === 'queued' ? 'warn' : undefined">
+                  {{ translateExecutionStatus(getExecutionItemStatus(item)) }}
+                </span>
+                <span class="accordion-arrow" :data-expanded="item.expanded">▾</span>
+              </div>
+            </button>
+
+            <div v-if="item.expanded" class="execution-item-body">
+              <div v-if="item.runId" class="run-id-line">任务 ID：{{ item.runId }}</div>
+
+              <div v-if="getExecutionLogs(item).length" class="step-list">
+                <div v-for="(log, logIndex) in getExecutionLogs(item)" :key="log.id" class="step-row">
+                  <div class="step-index">{{ logIndex + 1 }}</div>
+                  <div class="step-indicator" :data-state="getLogStepState(item, logIndex, getExecutionLogs(item))">
+                    <span v-if="getLogStepState(item, logIndex, getExecutionLogs(item)) === 'running'" class="spinner"></span>
+                    <span v-else-if="getLogStepState(item, logIndex, getExecutionLogs(item)) === 'passed'">✓</span>
+                    <span v-else-if="getLogStepState(item, logIndex, getExecutionLogs(item)) === 'failed'">✕</span>
+                    <span v-else>·</span>
+                  </div>
+                  <div class="step-content">
+                    <div class="step-content-header">
+                      <strong>{{ log.message }}</strong>
+                      <span>{{ new Date(log.timestamp).toLocaleTimeString() }}</span>
+                    </div>
+                    <p class="step-key">{{ log.stepKey }}</p>
+                    <pre v-if="log.payloadJson" class="code-block step-payload">{{ formatLogPayload(log) }}</pre>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="step-row step-row-placeholder">
+                <div class="step-index">1</div>
+                <div class="step-indicator" :data-state="getPlaceholderStepState(item)">
+                  <span v-if="getPlaceholderStepState(item) === 'running'" class="spinner"></span>
+                  <span v-else-if="getPlaceholderStepState(item) === 'failed'">✕</span>
+                  <span v-else>·</span>
+                </div>
+                <div class="step-content">
+                  <strong>{{ getPlaceholderStepMessage(item) }}</strong>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
       </div>
-      <p v-else class="empty-state">选择一条测试记录后，这里会显示执行日志。</p>
     </section>
   </div>
 </template>
 
 <style scoped>
-.device-brief-card,
-.quick-action-card,
-.definition-card,
-.log-entry {
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.7);
+.tests-page-grid {
+  min-height: 100%;
 }
 
-.device-brief-card {
+.tests-shell-card {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 16px;
-  padding: 16px;
-  border-radius: 18px;
+  gap: 18px;
 }
 
-.device-brief-card dt,
-.log-step {
+.stage-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.stage-panel-narrow {
+  max-width: 980px;
+}
+
+.section-heading-tight {
+  margin-bottom: 0;
+}
+
+.panel-intro {
+  margin: 0;
   color: var(--muted);
-  font-size: 0.84rem;
 }
 
-.device-brief-card dd {
-  margin: 6px 0 0;
-  font-weight: 600;
+.warning-banner {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(194, 125, 18, 0.24);
+  background: rgba(255, 247, 231, 0.92);
+  color: #9a6413;
 }
 
-.definition-card {
-  margin-bottom: 18px;
-  padding: 18px;
-  border-radius: 18px;
+.warning-banner-error {
+  border-color: rgba(165, 58, 44, 0.24);
+  background: rgba(255, 239, 236, 0.92);
+  color: var(--bad);
 }
 
-.quick-action-card {
+.device-table {
   display: grid;
-  gap: 14px;
-  margin-bottom: 18px;
-  padding: 18px;
-  border-radius: 18px;
+  gap: 10px;
 }
 
-.definition-card h4,
-.definition-card p,
-.quick-action-card h4,
-.quick-action-card p {
+.device-table-row {
+  display: grid;
+  grid-template-columns: 96px minmax(180px, 1.2fr) minmax(120px, 0.8fr) minmax(140px, 0.9fr) minmax(240px, 1.6fr) 96px;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.device-table-head {
+  background: rgba(240, 233, 255, 0.8);
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.device-tests {
+  color: var(--muted);
+}
+
+.compact-button {
+  min-height: 38px;
+  padding: 0 16px;
+}
+
+.selection-summary-card,
+.execution-header-card,
+.definition-option,
+.execution-item {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.selection-summary-card,
+.execution-header-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+}
+
+.selection-summary-card h4,
+.execution-header-card h4,
+.execution-subtitle,
+.definition-option p {
   margin: 0;
 }
 
-.definition-card p + p {
-  margin-top: 8px;
+.selection-summary-meta {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  text-align: right;
 }
 
-.definition-tag {
+.definition-checklist,
+.execution-list {
+  display: grid;
+  gap: 14px;
+}
+
+.definition-option {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 18px;
+  cursor: pointer;
+}
+
+.definition-option input {
+  margin-top: 4px;
+  width: 18px;
+  height: 18px;
+}
+
+.definition-option-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.definition-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
+  min-height: 26px;
   padding: 0 10px;
-  margin-bottom: 10px;
-  border-radius: 999px;
   background: rgba(92, 57, 181, 0.1);
   color: var(--accent-deep);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 700;
 }
 
-.run-list {
-  margin-bottom: 18px;
-}
-
-.run-card[data-active="true"] {
-  border-color: rgba(123, 66, 255, 0.45);
-  background: rgba(238, 229, 255, 0.9);
-}
-
-.run-summary-block {
-  align-items: flex-start;
-}
-
-.log-stream {
-  display: grid;
-  gap: 12px;
-}
-
-.log-entry {
-  padding: 14px 16px;
-  border-radius: 18px;
-}
-
-.log-entry[data-level="error"] {
-  border-color: rgba(165, 58, 44, 0.24);
-}
-
-.log-entry[data-level="warn"] {
-  border-color: rgba(194, 125, 18, 0.24);
-}
-
-.log-entry-header {
+.action-footer {
   display: flex;
   justify-content: space-between;
   gap: 16px;
   align-items: center;
 }
 
-.log-entry-header span {
+.execution-panel {
+  gap: 16px;
+}
+
+.execution-header-side {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.execution-subtitle {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.progress-track {
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  background: rgba(221, 214, 241, 0.72);
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  transition: width 180ms ease;
+}
+
+.execution-item {
+  overflow: hidden;
+}
+
+.execution-item-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.execution-item-header-main {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.execution-item-header-main p,
+.run-id-line,
+.step-key {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.execution-item-header-side {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.execution-order,
+.step-index {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(92, 57, 181, 0.1);
+  color: var(--accent-deep);
+  font-weight: 700;
+}
+
+.accordion-arrow {
+  color: var(--muted);
+  transition: transform 180ms ease;
+}
+
+.accordion-arrow[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+.execution-item-body {
+  padding: 0 18px 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.step-list {
+  display: grid;
+  gap: 12px;
+}
+
+.step-row {
+  display: grid;
+  grid-template-columns: 32px 32px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(123, 66, 255, 0.22);
+}
+
+.step-row-placeholder {
+  border-top: 1px dashed rgba(123, 66, 255, 0.22);
+}
+
+.step-indicator {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.step-indicator[data-state="passed"] {
+  color: var(--good);
+  border-color: rgba(47, 125, 75, 0.24);
+  background: rgba(230, 247, 235, 0.88);
+}
+
+.step-indicator[data-state="failed"] {
+  color: var(--bad);
+  border-color: rgba(165, 58, 44, 0.24);
+  background: rgba(255, 239, 236, 0.88);
+}
+
+.step-indicator[data-state="running"] {
+  color: var(--warn);
+  border-color: rgba(194, 125, 18, 0.24);
+  background: rgba(255, 247, 231, 0.88);
+}
+
+.step-content {
+  min-width: 0;
+}
+
+.step-content-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.step-content-header span {
   color: var(--muted);
   font-size: 0.82rem;
 }
 
-.log-step {
-  margin: 6px 0 0;
-}
-
-.log-payload {
-  margin-top: 12px;
+.step-payload {
+  margin-top: 10px;
   padding: 12px 14px;
 }
 
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1080px) {
+  .device-table-row {
+    grid-template-columns: 96px minmax(140px, 1fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr);
+  }
+
+  .device-table-row span:nth-child(5),
+  .device-table-row span:nth-child(6),
+  .device-table-head span:nth-child(5),
+  .device-table-head span:nth-child(6) {
+    grid-column: span 2;
+  }
+}
+
 @media (max-width: 720px) {
-  .device-brief-card {
+  .selection-summary-card,
+  .execution-header-card,
+  .action-footer,
+  .execution-item-header,
+  .step-content-header {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .selection-summary-meta,
+  .execution-header-side {
+    text-align: left;
+    justify-items: start;
+  }
+
+  .device-table-row {
     grid-template-columns: 1fr;
   }
 
-  .log-entry-header {
-    flex-direction: column;
-    align-items: flex-start;
+  .device-table-head {
+    display: none;
+  }
+
+  .step-row {
+    grid-template-columns: 28px 28px minmax(0, 1fr);
   }
 }
 </style>
