@@ -6,6 +6,21 @@ function isUnlocked(mode: number | undefined): boolean {
   return mode != undefined && mode !== DoorLockMode.Secured && mode !== DoorLockMode.Unknown;
 }
 
+function isBoltUnlocked(status: unknown): boolean | undefined {
+  if (typeof status !== "string") {
+    return undefined;
+  }
+
+  if (status === "unlocked") {
+    return true;
+  }
+  if (status === "locked") {
+    return false;
+  }
+
+  return undefined;
+}
+
 function isModeMatched(mode: number | undefined, targetMode: DoorLockMode): boolean {
   if (targetMode === DoorLockMode.Unsecured) {
     return isUnlocked(mode);
@@ -24,9 +39,9 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     key: "lock-basic",
     name: "门锁开关门测试",
     deviceType: "door-lock",
-    version: 4,
+    version: 5,
     enabled: true,
-    description: "自动读取当前门锁状态，切换一次后在 5 秒内等待 boltStatus 变为目标状态，成功后再恢复到初始状态。",
+    description: "先读取门锁当前锁舌状态，先切到相反状态并校验，通过后再切回初始状态，两个步骤都以 boltStatus 为准。",
     inputSchema: {
       reportTimeoutMs: { type: "number", default: 5000, min: 1000, max: 10000 },
     },
@@ -40,15 +55,22 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     const reportTimeoutMs = Number(context.inputs.reportTimeoutMs ?? 5000);
 
     const capabilities = await context.invokeCcApi({ commandClass: "Door Lock", method: "getCapabilities" }) as Record<string, unknown> | undefined;
-    const initialStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as { currentMode?: number } | undefined;
+    const initialStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as {
+      currentMode?: number;
+      boltStatus?: string;
+    } | undefined;
     const initialMode = initialStatus?.currentMode;
+    const initialBoltStatus = initialStatus?.boltStatus;
+    const initialUnlocked =
+      isBoltUnlocked(initialBoltStatus) ??
+      (initialMode != undefined ? isUnlocked(initialMode) : undefined);
 
-    if (initialMode == undefined) {
-      throw new Error("未读取到门锁当前状态，无法执行自动开关门测试。");
+    if (initialUnlocked == undefined) {
+      throw new Error("未读取到门锁当前锁舌状态，无法执行自动开关门测试。");
     }
 
-    const firstTargetMode = isUnlocked(initialMode) ? DoorLockMode.Secured : DoorLockMode.Unsecured;
-    const restoreTargetMode = isUnlocked(initialMode) ? DoorLockMode.Unsecured : DoorLockMode.Secured;
+    const firstTargetMode = initialUnlocked ? DoorLockMode.Secured : DoorLockMode.Unsecured;
+    const restoreTargetMode = initialUnlocked ? DoorLockMode.Unsecured : DoorLockMode.Secured;
     const firstActionLabel = firstTargetMode === DoorLockMode.Unsecured ? "解锁" : "上锁";
     const restoreActionLabel = restoreTargetMode === DoorLockMode.Unsecured ? "解锁" : "上锁";
     const firstExpectedBoltStatus = expectedBoltStatus(firstTargetMode);
@@ -58,6 +80,8 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       initialStatus,
       capabilities,
       reportTimeoutMs,
+      initialBoltStatus,
+      initialUnlocked,
       firstTargetMode,
       firstExpectedBoltStatus,
       restoreTargetMode,
@@ -87,9 +111,16 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
 
     await context.log("info", "toggle.report", `已在 ${reportTimeoutMs}ms 内收到门锁${firstActionLabel}后的 boltStatus 上报`, firstReport);
 
-    const toggledStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as { currentMode?: number; targetMode?: number } | undefined;
-    if (!isModeMatched(toggledStatus?.currentMode, firstTargetMode)) {
-      throw new Error(`门锁${firstActionLabel}后状态校验失败。`);
+    const toggledStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as {
+      currentMode?: number;
+      targetMode?: number;
+      boltStatus?: string;
+    } | undefined;
+    if (toggledStatus?.boltStatus !== firstExpectedBoltStatus) {
+      throw new Error(`门锁${firstActionLabel}后 boltStatus 校验失败。`);
+    }
+    if (!isModeMatched(toggledStatus.currentMode, firstTargetMode)) {
+      throw new Error(`门锁${firstActionLabel}后 currentMode 校验失败。`);
     }
 
     await context.log("info", "toggle.assert", `门锁${firstActionLabel}状态校验通过`, {
@@ -120,9 +151,16 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
 
     await context.log("info", "restore.report", `已在 ${reportTimeoutMs}ms 内收到门锁${restoreActionLabel}后的 boltStatus 上报`, restoreReport);
 
-    const finalStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as { currentMode?: number; targetMode?: number } | undefined;
-    if (!isModeMatched(finalStatus?.currentMode, restoreTargetMode)) {
-      throw new Error("门锁恢复初始状态校验失败。");
+    const finalStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as {
+      currentMode?: number;
+      targetMode?: number;
+      boltStatus?: string;
+    } | undefined;
+    if (finalStatus?.boltStatus !== restoreExpectedBoltStatus) {
+      throw new Error("门锁恢复初始状态 boltStatus 校验失败。");
+    }
+    if (!isModeMatched(finalStatus.currentMode, restoreTargetMode)) {
+      throw new Error("门锁恢复初始状态 currentMode 校验失败。");
     }
 
     await context.log("info", "restore.assert", "门锁恢复初始状态校验通过", {
