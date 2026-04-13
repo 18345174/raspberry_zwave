@@ -36,6 +36,7 @@ export interface TestExecutionContext {
 
 export interface ExecutableTestDefinition {
   meta: TestDefinition;
+  traceCommandClasses?: string[];
   supports(node: NodeDetail): { supported: boolean; reason?: string };
   run(context: TestExecutionContext): Promise<Record<string, unknown>>;
 }

@@ -52,12 +52,17 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private driver?: any;
   private controllerEventsAttached = false;
   private inclusionChallenge: InclusionChallenge | null = null;
+  private valueUpdateConsoleFilter?: (payload: { nodeId?: unknown; commandClass?: unknown }) => boolean;
 
   public constructor(private readonly appConfig: AppConfig) {}
 
   public onEvent(listener: (event: ZwaveEvent) => void): () => void {
     this.emitter.on("event", listener);
     return () => this.emitter.off("event", listener);
+  }
+
+  public setValueUpdateConsoleFilter(filter: (payload: { nodeId?: unknown; commandClass?: unknown }) => boolean): void {
+    this.valueUpdateConsoleFilter = filter;
   }
 
   public async scanPorts(): Promise<SerialPortInfo[]> {
@@ -533,10 +538,13 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     const forwardValueEvent = (type: string, message: string) => (node: any, args: any) => {
-      this.log("info", message, {
+      const payload = {
         nodeId: node.id,
         ...this.summarizeValueArgs(args),
-      });
+      };
+      if (this.valueUpdateConsoleFilter?.(payload) ?? true) {
+        this.log("info", message, payload);
+      }
       this.publish({ type, payload: { nodeId: node.id, ...args } });
     };
 

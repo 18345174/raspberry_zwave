@@ -10,6 +10,10 @@ import { executableDefinitions } from "../test-engine/registry.js";
 
 export class TestEngineService {
   private activeRunId?: string;
+  private activeTraceContext?: {
+    nodeId: number;
+    commandClasses?: string[];
+  };
   private readonly cancellationFlags = new Set<string>();
 
   public constructor(
@@ -50,6 +54,23 @@ export class TestEngineService {
 
   public getActiveRunId(): string | undefined {
     return this.activeRunId;
+  }
+
+  public shouldConsoleLogValueUpdate(payload: { nodeId?: unknown; commandClass?: unknown }): boolean {
+    if (!this.activeTraceContext) {
+      return true;
+    }
+
+    if (payload.nodeId !== this.activeTraceContext.nodeId) {
+      return false;
+    }
+
+    if (!this.activeTraceContext.commandClasses?.length) {
+      return true;
+    }
+
+    const normalizedCommandClass = this.normalizeCommandClass(payload.commandClass);
+    return this.activeTraceContext.commandClasses.some((item) => this.normalizeCommandClass(item) === normalizedCommandClass);
   }
 
   public async createRun(input: CreateTestRunInput): Promise<TestRunRecord> {
@@ -106,6 +127,10 @@ export class TestEngineService {
 
     const startedMs = Date.now();
     this.activeRunId = runId;
+    this.activeTraceContext = {
+      nodeId: run.nodeId,
+      commandClasses: definition.traceCommandClasses,
+    };
     run.status = "running";
     run.startedAt = nowIso();
     this.storage.updateTestRun(run);
@@ -230,6 +255,7 @@ export class TestEngineService {
     } finally {
       this.cancellationFlags.delete(runId);
       this.activeRunId = undefined;
+      this.activeTraceContext = undefined;
       this.storage.updateTestRun(run);
       this.eventBus.publish({ type: "test.run.finished", timestamp: nowIso(), payload: run });
     }

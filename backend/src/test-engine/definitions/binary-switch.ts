@@ -2,6 +2,7 @@ import { waitForCondition } from "../definition-helpers.js";
 import type { ExecutableTestDefinition } from "../types.js";
 
 export const binarySwitchDefinition: ExecutableTestDefinition = {
+  traceCommandClasses: ["Binary Switch"],
   meta: {
     id: "binary-switch-basic-v1",
     key: "binary-switch-basic",

@@ -51,6 +51,8 @@ export async function createApp(config: AppConfig) {
   const testEngine = new TestEngineService(storage, eventBus, nodeRegistry, zwaveRuntime);
   const system = new SystemService(config, storage, zwaveRuntime, testEngine);
 
+  adapter.setValueUpdateConsoleFilter((payload) => testEngine.shouldConsoleLogValueUpdate(payload));
+
   app.services = {
     config,
     storage,
