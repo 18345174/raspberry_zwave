@@ -1,5 +1,6 @@
 import type {
   AuthSessionView,
+  ContactConfigRow,
   DriverStatus,
   InclusionChallenge,
   NodeDetail,
@@ -121,6 +122,9 @@ export const apiClient = {
   },
   getNode(nodeId: number) {
     return request<NodeDetail>(`/api/nodes/${nodeId}`);
+  },
+  getContactConfig(nodeId: number) {
+    return request<{ items: ContactConfigRow[] }>(`/api/nodes/${nodeId}/contact-config`);
   },
   refreshNode(nodeId: number) {
     return request<NodeDetail>(`/api/nodes/${nodeId}/refresh`, { method: "POST" });

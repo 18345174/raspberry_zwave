@@ -156,6 +156,11 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return { items: node.values };
   });
 
+  app.get("/api/nodes/:nodeId/contact-config", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    return { items: await services.zwaveRuntime.getContactConfig(nodeId) };
+  });
+
   app.post("/api/nodes/:nodeId/refresh", async (request) => {
     const { nodeId } = nodeIdParamSchema.parse(request.params);
     return await services.nodeRegistry.refreshNode(nodeId);

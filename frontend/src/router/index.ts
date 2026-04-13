@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 
+import ContactConfigPage from "../pages/ContactConfigPage.vue";
 import ControllerPage from "../pages/ControllerPage.vue";
 import InclusionPage from "../pages/InclusionPage.vue";
 import LoginPage from "../pages/LoginPage.vue";
@@ -15,6 +16,7 @@ export const router = createRouter({
     { path: "/controller", component: ControllerPage },
     { path: "/inclusion", component: InclusionPage },
     { path: "/nodes", component: NodesPage },
+    { path: "/contact-config", component: ContactConfigPage },
     { path: "/tests", component: TestsPage },
     { path: "/system", component: SystemPage },
   ],

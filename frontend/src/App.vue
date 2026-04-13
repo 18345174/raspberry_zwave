@@ -12,6 +12,7 @@ const navItems = [
   { to: "/controller", label: "控制器" },
   { to: "/inclusion", label: "添加/删除设备" },
   { to: "/nodes", label: "设备列表" },
+  { to: "/contact-config", label: "门磁配置" },
   { to: "/tests", label: "测试" },
   { to: "/system", label: "系统" },
 ];

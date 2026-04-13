@@ -115,6 +115,14 @@ export interface NodeDetail extends NodeSummary {
   values: NodeValueSnapshot[];
 }
 
+export interface ContactConfigRow {
+  parameter: number;
+  label: string;
+  display: string;
+  raw: string;
+  range: string;
+}
+
 export interface ZwaveEvent<T = unknown> {
   type: string;
   timestamp: string;

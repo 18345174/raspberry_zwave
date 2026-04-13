@@ -1,4 +1,5 @@
 import type {
+  ContactConfigRow,
   DriverStatus,
   InclusionChallenge,
   InvokeCcApiInput,
@@ -27,6 +28,7 @@ export interface IZwaveAdapter {
   listNodes(): Promise<NodeSummary[]>;
   getNode(nodeId: number): Promise<NodeDetail>;
   refreshNode(nodeId: number): Promise<NodeDetail>;
+  getContactConfig(nodeId: number): Promise<ContactConfigRow[]>;
   pingNode(nodeId: number): Promise<boolean>;
   healNode(nodeId: number): Promise<unknown>;
   setValue(input: SetValueInput): Promise<void>;

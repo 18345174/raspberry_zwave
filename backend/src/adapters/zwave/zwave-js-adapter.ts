@@ -3,6 +3,7 @@ import { CommandClasses, SecurityClass, getCCName } from "@zwave-js/core";
 
 import type { AppConfig } from "../../domain/config.js";
 import type {
+  ContactConfigRow,
   DriverStatus,
   EndpointSnapshot,
   InclusionChallenge,
@@ -340,6 +341,105 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
     await node.refreshInfo();
     return this.toNodeDetail(node);
+  }
+
+  public async getContactConfig(nodeId: number): Promise<ContactConfigRow[]> {
+    this.ensureDriverReady();
+    const node = this.driver.controller.nodes.get(nodeId);
+    if (!node) {
+      throw new Error(`Node ${nodeId} not found.`);
+    }
+
+    const targetParameters = new Map<number, string>([
+      [10, "x"],
+      [11, "y"],
+      [12, "z"],
+    ]);
+
+    try {
+      if (typeof node.refreshCCValues === "function") {
+        await node.refreshCCValues(CommandClasses.Configuration);
+      }
+    } catch {
+      // Ignore refresh failures and continue with direct reads.
+    }
+
+    const endpoint = node.getEndpoint?.(0) ?? node;
+    const rows: ContactConfigRow[] = [];
+
+    for (const [parameter, fallbackLabel] of targetParameters) {
+      const valueId = {
+        commandClass: CommandClasses.Configuration,
+        endpoint: 0,
+        property: parameter,
+      };
+      const metadata = node.getValueMetadata?.(valueId) ?? {};
+
+      let rawValue: unknown;
+      let errorText: string | undefined;
+
+      try {
+        rawValue = await endpoint.invokeCCAPI(CommandClasses.Configuration, "get", parameter);
+      } catch (error) {
+        errorText = error instanceof Error ? error.message : String(error);
+      }
+
+      if (rawValue == undefined) {
+        rawValue = node.getValue?.(valueId);
+      }
+
+      const states = metadata && typeof metadata.states === "object" && metadata.states
+        ? metadata.states as Record<string, unknown>
+        : undefined;
+      const label = typeof metadata.label === "string" && metadata.label.trim()
+        ? metadata.label
+        : fallbackLabel;
+
+      let displayValue: string;
+      if (errorText && rawValue == undefined) {
+        displayValue = `错误: ${errorText}`;
+      } else if (rawValue == undefined) {
+        displayValue = "未知";
+      } else {
+        const stateText = states?.[String(rawValue)] ?? states?.[String(Number(rawValue))];
+        if (stateText != undefined) {
+          displayValue = String(stateText) === String(rawValue)
+            ? String(stateText)
+            : `${String(stateText)} (${String(rawValue)})`;
+        } else {
+          displayValue = String(rawValue);
+        }
+      }
+
+      const rangeParts: string[] = [];
+      if (states && Object.keys(states).length > 0) {
+        rangeParts.push(
+          Object.entries(states)
+            .map(([key, value]) => `${key}:${String(value)}`)
+            .join(", "),
+        );
+      }
+
+      const minValue = metadata?.min;
+      const maxValue = metadata?.max;
+      if (minValue != undefined || maxValue != undefined) {
+        rangeParts.push(`${minValue != undefined ? String(minValue) : ""}~${maxValue != undefined ? String(maxValue) : ""}`);
+      }
+
+      if (metadata?.unit) {
+        rangeParts.push(String(metadata.unit));
+      }
+
+      rows.push({
+        parameter,
+        label: `参数 ${parameter} (${label})`,
+        display: displayValue,
+        raw: rawValue == undefined ? "" : String(rawValue),
+        range: rangeParts.join(" | "),
+      });
+    }
+
+    return rows.sort((left, right) => left.parameter - right.parameter);
   }
 
   public async pingNode(nodeId: number): Promise<boolean> {

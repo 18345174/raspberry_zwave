@@ -1,5 +1,6 @@
 import type { AppConfig } from "../domain/config.js";
 import type {
+  ContactConfigRow,
   DriverStatus,
   InclusionChallenge,
   InvokeCcApiInput,
@@ -200,6 +201,10 @@ export class ZwaveRuntimeService {
 
   public async refreshNode(nodeId: number): Promise<NodeDetail> {
     return this.adapter.refreshNode(nodeId);
+  }
+
+  public async getContactConfig(nodeId: number): Promise<ContactConfigRow[]> {
+    return this.adapter.getContactConfig(nodeId);
   }
 
   public async pingNode(nodeId: number): Promise<boolean> {
