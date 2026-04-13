@@ -38,7 +38,10 @@ declare module "fastify" {
 }
 
 export async function createApp(config: AppConfig) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: true,
+    bodyLimit: 32 * 1024 * 1024,
+  });
   const frontendDistDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../frontend/dist");
   const frontendIndexPath = path.join(frontendDistDir, "index.html");
   const storage = new DatabaseService(config.dataDir);

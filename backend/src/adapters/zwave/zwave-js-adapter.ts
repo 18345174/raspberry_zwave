@@ -1,11 +1,22 @@
 import { EventEmitter } from "node:events";
-import { CommandClasses, SecurityClass, getCCName } from "@zwave-js/core";
+import {
+  CommandClasses,
+  SecurityClass,
+  extractFirmware,
+  getCCName,
+  guessFirmwareFileFormat,
+  tryUnzipFirmwareFile,
+} from "@zwave-js/core";
 
 import type { AppConfig } from "../../domain/config.js";
 import type {
   ContactConfigRow,
   DriverStatus,
   EndpointSnapshot,
+  FirmwareFileInspection,
+  FirmwareUpdateCapabilities,
+  FirmwareUpdateResultSummary,
+  FirmwareUpdateStatus,
   InclusionChallenge,
   InvokeCcApiInput,
   NodeDetail,
@@ -13,6 +24,7 @@ import type {
   NodeValueSnapshot,
   SecurityGrantInput,
   SerialPortInfo,
+  StartFirmwareUpdateInput,
   SetValueInput,
   ValueIdInput,
   ZwaveEvent,
@@ -36,11 +48,22 @@ type PendingRequest = PendingGrantRequest | PendingDskRequest;
 
 type ZwaveModule = typeof import("zwave-js");
 
+type ParsedFirmwarePayload = FirmwareFileInspection & {
+  data: Uint8Array<ArrayBuffer>;
+  firmwareId?: number;
+};
+
+type MutableFirmwareUpdateSession = FirmwareUpdateStatus & {
+  abortRequested?: boolean;
+};
+
 export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private readonly serialDiscovery = new SerialDiscoveryService();
   private readonly emitter = new EventEmitter();
   private readonly pendingInclusionRequests = new Map<string, PendingRequest>();
   private readonly publishedReadyNodeIds = new Set<number>();
+  private readonly firmwareUpdateSessions = new Map<number, MutableFirmwareUpdateSession>();
+  private readonly firmwareUpdateTasks = new Map<number, Promise<void>>();
   private readonly status: DriverStatus = {
     phase: "idle",
     isInclusionActive: false,
@@ -442,6 +465,121 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return rows.sort((left, right) => left.parameter - right.parameter);
   }
 
+  public async getFirmwareUpdateCapabilities(nodeId: number): Promise<FirmwareUpdateCapabilities> {
+    this.ensureDriverReady();
+    const node = this.requireNode(nodeId);
+    try {
+      const capabilities = await node.getFirmwareUpdateCapabilities();
+      return this.normalizeFirmwareUpdateCapabilities(capabilities);
+    } catch (error) {
+      this.log("warn", "[firmware] Failed to query firmware update capabilities", {
+        nodeId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        firmwareUpgradable: false,
+        firmwareTargets: [],
+      };
+    }
+  }
+
+  public async inspectFirmwareFile(nodeId: number, filename: string, contentBase64: string): Promise<FirmwareFileInspection> {
+    this.ensureDriverReady();
+    this.requireNode(nodeId);
+    const parsed = await this.parseFirmwarePayload(filename, contentBase64);
+    const { data, firmwareId, ...inspection } = parsed;
+    void data;
+    void firmwareId;
+    return inspection;
+  }
+
+  public async getFirmwareUpdateStatus(nodeId: number): Promise<FirmwareUpdateStatus | null> {
+    this.ensureDriverReady();
+    this.requireNode(nodeId);
+    return this.cloneFirmwareUpdateSession(this.firmwareUpdateSessions.get(nodeId));
+  }
+
+  public async startFirmwareUpdate(input: StartFirmwareUpdateInput): Promise<FirmwareUpdateStatus> {
+    this.ensureDriverReady();
+    const node = this.requireNode(input.nodeId);
+    const activeSession = this.findActiveFirmwareUpdateSession();
+    if (activeSession && activeSession.nodeId !== input.nodeId) {
+      throw new Error(`节点 ${activeSession.nodeId} 的固件升级仍在执行，请等待完成后再启动新的升级任务。`);
+    }
+    if (activeSession && (activeSession.phase === "preparing" || activeSession.phase === "running")) {
+      throw new Error(`节点 ${input.nodeId} 的固件升级已在执行中。`);
+    }
+
+    const parsed = await this.parseFirmwarePayload(input.filename, input.contentBase64);
+    const capabilities = await this.getFirmwareUpdateCapabilities(input.nodeId);
+    if (!capabilities.firmwareUpgradable) {
+      throw new Error(`节点 ${input.nodeId} 不支持固件升级。`);
+    }
+
+    const requestedTarget = input.target;
+    if (!capabilities.firmwareTargets.includes(requestedTarget)) {
+      throw new Error(`节点 ${input.nodeId} 不支持固件目标 ${requestedTarget}。`);
+    }
+    if (parsed.detectedTarget != undefined && parsed.detectedTarget !== requestedTarget) {
+      throw new Error(
+        `固件文件检测到的目标为 ${parsed.detectedTarget}，与当前选择的目标 ${requestedTarget} 不一致。`,
+      );
+    }
+
+    const session: MutableFirmwareUpdateSession = {
+      nodeId: input.nodeId,
+      phase: "preparing",
+      sourceFilename: parsed.sourceFilename,
+      firmwareFilename: parsed.firmwareFilename,
+      format: parsed.format,
+      target: requestedTarget,
+      detectedTarget: parsed.detectedTarget,
+      fileSize: parsed.fileSize,
+      options: {
+        resume: Boolean(input.resume),
+        nonSecureTransfer: Boolean(input.nonSecureTransfer),
+      },
+      startedAt: nowIso(),
+      updatedAt: nowIso(),
+      message: "正在启动固件升级",
+    };
+
+    this.firmwareUpdateSessions.set(input.nodeId, session);
+    this.publishFirmwareUpdateSession(session);
+    this.log("info", "[firmware] Starting node firmware update", {
+      nodeId: input.nodeId,
+      target: requestedTarget,
+      format: parsed.format,
+      sourceFilename: parsed.sourceFilename,
+      firmwareFilename: parsed.firmwareFilename,
+      fileSize: parsed.fileSize,
+      resume: session.options.resume,
+      nonSecureTransfer: session.options.nonSecureTransfer,
+    });
+
+    const task = this.runFirmwareUpdate(node, session, parsed).finally(() => {
+      this.firmwareUpdateTasks.delete(input.nodeId);
+    });
+    this.firmwareUpdateTasks.set(input.nodeId, task);
+    return this.cloneFirmwareUpdateSession(session)!;
+  }
+
+  public async abortFirmwareUpdate(nodeId: number): Promise<void> {
+    this.ensureDriverReady();
+    const node = this.requireNode(nodeId);
+    const session = this.firmwareUpdateSessions.get(nodeId);
+    if (!session || (session.phase !== "preparing" && session.phase !== "running")) {
+      throw new Error(`节点 ${nodeId} 当前没有正在执行的固件升级任务。`);
+    }
+
+    session.abortRequested = true;
+    this.updateFirmwareUpdateSession(nodeId, {
+      message: "正在取消固件升级",
+    });
+    this.log("warn", "[firmware] Aborting node firmware update", { nodeId });
+    await node.abortFirmwareUpdate();
+  }
+
   public async pingNode(nodeId: number): Promise<boolean> {
     this.ensureDriverReady();
     const node = this.driver.controller.nodes.get(nodeId);
@@ -483,6 +621,195 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Unknown command class: ${String(input.commandClass)}`);
     }
     return endpoint.invokeCCAPI(cc, input.method, ...(input.args ?? []));
+  }
+
+  private requireNode(nodeId: number): any {
+    const node = this.driver.controller.nodes.get(nodeId);
+    if (!node) {
+      throw new Error(`Node ${nodeId} not found.`);
+    }
+    return node;
+  }
+
+  private normalizeFirmwareUpdateCapabilities(capabilities: any): FirmwareUpdateCapabilities {
+    if (!capabilities?.firmwareUpgradable) {
+      return {
+        firmwareUpgradable: false,
+        firmwareTargets: [],
+      };
+    }
+
+    return {
+      firmwareUpgradable: true,
+      firmwareTargets: Array.isArray(capabilities.firmwareTargets)
+        ? [...capabilities.firmwareTargets].map((value) => Number(value)).sort((left, right) => left - right)
+        : [],
+      continuesToFunction: typeof capabilities.continuesToFunction === "boolean"
+        ? capabilities.continuesToFunction
+        : undefined,
+      supportsActivation: typeof capabilities.supportsActivation === "boolean"
+        ? capabilities.supportsActivation
+        : undefined,
+      supportsResuming: typeof capabilities.supportsResuming === "boolean"
+        ? capabilities.supportsResuming
+        : undefined,
+      supportsNonSecureTransfer: typeof capabilities.supportsNonSecureTransfer === "boolean"
+        ? capabilities.supportsNonSecureTransfer
+        : undefined,
+    };
+  }
+
+  private async parseFirmwarePayload(sourceFilename: string, contentBase64: string): Promise<ParsedFirmwarePayload> {
+    const rawData = Buffer.from(contentBase64, "base64");
+    if (!rawData.length) {
+      throw new Error("固件文件为空。");
+    }
+
+    let firmwareFilename = sourceFilename;
+    let extractedData = this.copyBytes(rawData);
+    let format: string;
+
+    const maybeZip = sourceFilename.toLowerCase().endsWith(".zip")
+      || (rawData.length >= 4 && rawData[0] === 0x50 && rawData[1] === 0x4b);
+
+    if (maybeZip) {
+      const unzipped = tryUnzipFirmwareFile(rawData);
+      if (!unzipped) {
+        throw new Error("ZIP 包中未找到可识别的 Z-Wave 固件文件。");
+      }
+      firmwareFilename = unzipped.filename;
+      extractedData = this.copyBytes(unzipped.rawData);
+      format = unzipped.format;
+    } else {
+      format = guessFirmwareFileFormat(sourceFilename, rawData);
+    }
+
+    const firmware = await extractFirmware(extractedData, format as any);
+    return {
+      sourceFilename,
+      firmwareFilename,
+      format,
+      fileSize: firmware.data.length,
+      detectedTarget: firmware.firmwareTarget,
+      firmwareId: firmware.firmwareId,
+      data: this.copyBytes(firmware.data),
+    };
+  }
+
+  private copyBytes(data: ArrayLike<number>): Uint8Array<ArrayBuffer> {
+    const copy = new Uint8Array(data.length);
+    copy.set(data);
+    return copy;
+  }
+
+  private findActiveFirmwareUpdateSession(): MutableFirmwareUpdateSession | undefined {
+    return [...this.firmwareUpdateSessions.values()].find((session) =>
+      session.phase === "preparing" || session.phase === "running");
+  }
+
+  private cloneFirmwareUpdateSession(session?: MutableFirmwareUpdateSession): FirmwareUpdateStatus | null {
+    if (!session) {
+      return null;
+    }
+    const { abortRequested, ...clone } = session;
+    void abortRequested;
+    return {
+      ...clone,
+      options: { ...clone.options },
+      progress: clone.progress ? { ...clone.progress } : undefined,
+      result: clone.result ? { ...clone.result } : undefined,
+    };
+  }
+
+  private publishFirmwareUpdateSession(session?: MutableFirmwareUpdateSession): void {
+    const status = this.cloneFirmwareUpdateSession(session);
+    if (!status) {
+      return;
+    }
+    this.publish({
+      type: "zwave.firmware.update.changed",
+      payload: status,
+    });
+  }
+
+  private updateFirmwareUpdateSession(nodeId: number, patch: Partial<MutableFirmwareUpdateSession>): void {
+    const session = this.firmwareUpdateSessions.get(nodeId);
+    if (!session) {
+      return;
+    }
+
+    Object.assign(session, patch, { updatedAt: nowIso() });
+    this.publishFirmwareUpdateSession(session);
+  }
+
+  private finalizeFirmwareUpdateSession(nodeId: number, patch: Partial<MutableFirmwareUpdateSession>): void {
+    const session = this.firmwareUpdateSessions.get(nodeId);
+    if (!session) {
+      return;
+    }
+
+    Object.assign(session, patch, {
+      finishedAt: patch.finishedAt ?? session.finishedAt ?? nowIso(),
+      updatedAt: nowIso(),
+    });
+    this.publishFirmwareUpdateSession(session);
+  }
+
+  private async runFirmwareUpdate(node: any, session: MutableFirmwareUpdateSession, parsed: ParsedFirmwarePayload): Promise<void> {
+    this.updateFirmwareUpdateSession(node.id, {
+      phase: "running",
+      message: "正在传输固件分片",
+    });
+
+    try {
+      const result = await node.updateFirmware(
+        [{
+          data: parsed.data,
+          firmwareTarget: session.target,
+          firmwareId: parsed.firmwareId,
+        }],
+        {
+          resume: session.options.resume || undefined,
+          nonSecureTransfer: session.options.nonSecureTransfer || undefined,
+        },
+      );
+
+      if (result.success) {
+        this.finalizeFirmwareUpdateSession(node.id, {
+          phase: "completed",
+          result: this.normalizeFirmwareUpdateResult(result),
+          message: "固件升级完成",
+        });
+      } else {
+        this.finalizeFirmwareUpdateSession(node.id, {
+          phase: session.abortRequested ? "aborted" : "failed",
+          result: this.normalizeFirmwareUpdateResult(result),
+          error: session.abortRequested ? "固件升级已取消。" : "设备返回固件升级失败状态。",
+          message: session.abortRequested ? "固件升级已取消" : "固件升级失败",
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.finalizeFirmwareUpdateSession(node.id, {
+        phase: session.abortRequested ? "aborted" : "failed",
+        error: message,
+        message: session.abortRequested ? "固件升级已取消" : "固件升级失败",
+      });
+      this.log(session.abortRequested ? "warn" : "error", "[firmware] Node firmware update failed", {
+        nodeId: node.id,
+        error: message,
+        abortRequested: Boolean(session.abortRequested),
+      });
+    }
+  }
+
+  private normalizeFirmwareUpdateResult(result: any): FirmwareUpdateResultSummary {
+    return {
+      success: Boolean(result?.success),
+      status: Number(result?.status ?? -1),
+      waitTime: typeof result?.waitTime === "number" ? result.waitTime : undefined,
+      reInterview: typeof result?.reInterview === "boolean" ? result.reInterview : undefined,
+    };
   }
 
   private async loadModule(): Promise<ZwaveModule> {
@@ -666,6 +993,47 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
           ccId: this.getCommandClassName(ccId),
           args,
         },
+      });
+    });
+
+    driver.on("node firmware update progress", (node: any, progress: any) => {
+      const session = this.firmwareUpdateSessions.get(node.id);
+      if (!session) {
+        return;
+      }
+
+      this.updateFirmwareUpdateSession(node.id, {
+        phase: "running",
+        progress: {
+          currentFile: typeof progress?.currentFile === "number" ? progress.currentFile : undefined,
+          totalFiles: typeof progress?.totalFiles === "number" ? progress.totalFiles : undefined,
+          sentFragments: Number(progress?.sentFragments ?? 0),
+          totalFragments: Number(progress?.totalFragments ?? 0),
+          progress: Number(progress?.progress ?? 0),
+        },
+        message: `固件传输中 ${Number(progress?.progress ?? 0)}%`,
+      });
+    });
+
+    driver.on("node firmware update finished", (node: any, result: any) => {
+      const session = this.firmwareUpdateSessions.get(node.id);
+      if (!session) {
+        return;
+      }
+
+      this.finalizeFirmwareUpdateSession(node.id, {
+        phase: result?.success ? "completed" : session.abortRequested ? "aborted" : "failed",
+        result: this.normalizeFirmwareUpdateResult(result),
+        error: result?.success ? undefined : session.abortRequested ? "固件升级已取消。" : undefined,
+        message: result?.success ? "固件升级完成" : session.abortRequested ? "固件升级已取消" : "固件升级结束",
+      });
+      this.log(result?.success ? "info" : "warn", "[firmware] Node firmware update finished", {
+        nodeId: node.id,
+        success: Boolean(result?.success),
+        status: result?.status,
+        waitTime: result?.waitTime,
+        reInterview: result?.reInterview,
+        abortRequested: Boolean(session.abortRequested),
       });
     });
 
@@ -942,6 +1310,8 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.controllerEventsAttached = false;
     this.publishedReadyNodeIds.clear();
     this.pendingInclusionRequests.clear();
+    this.firmwareUpdateTasks.clear();
+    this.firmwareUpdateSessions.clear();
     this.inclusionChallenge = null;
     await current.destroy();
   }

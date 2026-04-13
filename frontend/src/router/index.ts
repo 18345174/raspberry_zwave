@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import ContactConfigPage from "../pages/ContactConfigPage.vue";
 import ControllerPage from "../pages/ControllerPage.vue";
+import FirmwareUpgradePage from "../pages/FirmwareUpgradePage.vue";
 import InclusionPage from "../pages/InclusionPage.vue";
 import LoginPage from "../pages/LoginPage.vue";
 import NodesPage from "../pages/NodesPage.vue";
@@ -17,6 +18,7 @@ export const router = createRouter({
     { path: "/inclusion", component: InclusionPage },
     { path: "/nodes", component: NodesPage },
     { path: "/contact-config", component: ContactConfigPage },
+    { path: "/firmware-upgrade", component: FirmwareUpgradePage },
     { path: "/tests", component: TestsPage },
     { path: "/system", component: SystemPage },
   ],

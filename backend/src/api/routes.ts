@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import {
+  firmwareFileBodySchema,
+  firmwareStartBodySchema,
   grantSecurityBodySchema,
   invokeCcBodySchema,
   loginBodySchema,
@@ -159,6 +161,41 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/nodes/:nodeId/contact-config", async (request) => {
     const { nodeId } = nodeIdParamSchema.parse(request.params);
     return { items: await services.zwaveRuntime.getContactConfig(nodeId) };
+  });
+
+  app.get("/api/nodes/:nodeId/firmware-update/capabilities", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    return await services.zwaveRuntime.getFirmwareUpdateCapabilities(nodeId);
+  });
+
+  app.get("/api/nodes/:nodeId/firmware-update/status", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    return { status: await services.zwaveRuntime.getFirmwareUpdateStatus(nodeId) };
+  });
+
+  app.post("/api/nodes/:nodeId/firmware-update/inspect", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    const payload = firmwareFileBodySchema.parse(request.body ?? {});
+    return await services.zwaveRuntime.inspectFirmwareFile(nodeId, payload.filename, payload.contentBase64);
+  });
+
+  app.post("/api/nodes/:nodeId/firmware-update/start", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    const payload = firmwareStartBodySchema.parse(request.body ?? {});
+    return await services.zwaveRuntime.startFirmwareUpdate({
+      nodeId,
+      filename: payload.filename,
+      contentBase64: payload.contentBase64,
+      target: payload.target,
+      resume: payload.resume,
+      nonSecureTransfer: payload.nonSecureTransfer,
+    });
+  });
+
+  app.post("/api/nodes/:nodeId/firmware-update/abort", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    await services.zwaveRuntime.abortFirmwareUpdate(nodeId);
+    return { ok: true };
   });
 
   app.post("/api/nodes/:nodeId/refresh", async (request) => {

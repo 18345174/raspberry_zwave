@@ -83,6 +83,67 @@ export interface ContactConfigRow {
   range: string;
 }
 
+export interface FirmwareUpdateCapabilities {
+  firmwareUpgradable: boolean;
+  firmwareTargets: number[];
+  continuesToFunction?: boolean;
+  supportsActivation?: boolean;
+  supportsResuming?: boolean;
+  supportsNonSecureTransfer?: boolean;
+}
+
+export interface FirmwareFileInspection {
+  sourceFilename: string;
+  firmwareFilename: string;
+  format: string;
+  fileSize: number;
+  detectedTarget?: number;
+}
+
+export interface FirmwareUpdateProgress {
+  currentFile?: number;
+  totalFiles?: number;
+  sentFragments: number;
+  totalFragments: number;
+  progress: number;
+}
+
+export type FirmwareUpdatePhase =
+  | "preparing"
+  | "running"
+  | "completed"
+  | "failed"
+  | "aborted";
+
+export interface FirmwareUpdateResultSummary {
+  success: boolean;
+  status: number;
+  waitTime?: number;
+  reInterview?: boolean;
+}
+
+export interface FirmwareUpdateStatus {
+  nodeId: number;
+  phase: FirmwareUpdatePhase;
+  sourceFilename: string;
+  firmwareFilename: string;
+  format: string;
+  target: number;
+  detectedTarget?: number;
+  fileSize: number;
+  options: {
+    resume: boolean;
+    nonSecureTransfer: boolean;
+  };
+  startedAt: string;
+  finishedAt?: string;
+  updatedAt: string;
+  progress?: FirmwareUpdateProgress;
+  result?: FirmwareUpdateResultSummary;
+  error?: string;
+  message?: string;
+}
+
 export interface TestDefinition {
   id: string;
   key: string;

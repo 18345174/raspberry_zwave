@@ -45,6 +45,17 @@ export const runTestBodySchema = z.object({
   inputs: z.record(z.unknown()).default({}),
 });
 
+export const firmwareFileBodySchema = z.object({
+  filename: z.string().min(1),
+  contentBase64: z.string().min(1),
+});
+
+export const firmwareStartBodySchema = firmwareFileBodySchema.extend({
+  target: z.number().int().nonnegative(),
+  resume: z.boolean().default(false),
+  nonSecureTransfer: z.boolean().default(false),
+});
+
 export const loginBodySchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),

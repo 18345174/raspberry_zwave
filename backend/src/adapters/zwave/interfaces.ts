@@ -1,11 +1,15 @@
 import type {
   ContactConfigRow,
   DriverStatus,
+  FirmwareFileInspection,
+  FirmwareUpdateCapabilities,
+  FirmwareUpdateStatus,
   InclusionChallenge,
   InvokeCcApiInput,
   NodeDetail,
   NodeSummary,
   SecurityGrantInput,
+  StartFirmwareUpdateInput,
   SerialPortInfo,
   SetValueInput,
   ZwaveEvent,
@@ -29,6 +33,11 @@ export interface IZwaveAdapter {
   getNode(nodeId: number): Promise<NodeDetail>;
   refreshNode(nodeId: number): Promise<NodeDetail>;
   getContactConfig(nodeId: number): Promise<ContactConfigRow[]>;
+  getFirmwareUpdateCapabilities(nodeId: number): Promise<FirmwareUpdateCapabilities>;
+  inspectFirmwareFile(nodeId: number, filename: string, contentBase64: string): Promise<FirmwareFileInspection>;
+  getFirmwareUpdateStatus(nodeId: number): Promise<FirmwareUpdateStatus | null>;
+  startFirmwareUpdate(input: StartFirmwareUpdateInput): Promise<FirmwareUpdateStatus>;
+  abortFirmwareUpdate(nodeId: number): Promise<void>;
   pingNode(nodeId: number): Promise<boolean>;
   healNode(nodeId: number): Promise<unknown>;
   setValue(input: SetValueInput): Promise<void>;

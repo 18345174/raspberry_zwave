@@ -2,11 +2,15 @@ import type { AppConfig } from "../domain/config.js";
 import type {
   ContactConfigRow,
   DriverStatus,
+  FirmwareFileInspection,
+  FirmwareUpdateCapabilities,
+  FirmwareUpdateStatus,
   InclusionChallenge,
   InvokeCcApiInput,
   NodeDetail,
   NodeSummary,
   SecurityGrantInput,
+  StartFirmwareUpdateInput,
   SerialPortInfo,
   SetValueInput,
 } from "../domain/types.js";
@@ -205,6 +209,26 @@ export class ZwaveRuntimeService {
 
   public async getContactConfig(nodeId: number): Promise<ContactConfigRow[]> {
     return this.adapter.getContactConfig(nodeId);
+  }
+
+  public async getFirmwareUpdateCapabilities(nodeId: number): Promise<FirmwareUpdateCapabilities> {
+    return this.adapter.getFirmwareUpdateCapabilities(nodeId);
+  }
+
+  public async inspectFirmwareFile(nodeId: number, filename: string, contentBase64: string): Promise<FirmwareFileInspection> {
+    return this.adapter.inspectFirmwareFile(nodeId, filename, contentBase64);
+  }
+
+  public async getFirmwareUpdateStatus(nodeId: number): Promise<FirmwareUpdateStatus | null> {
+    return this.adapter.getFirmwareUpdateStatus(nodeId);
+  }
+
+  public async startFirmwareUpdate(input: StartFirmwareUpdateInput): Promise<FirmwareUpdateStatus> {
+    return this.adapter.startFirmwareUpdate(input);
+  }
+
+  public async abortFirmwareUpdate(nodeId: number): Promise<void> {
+    await this.adapter.abortFirmwareUpdate(nodeId);
   }
 
   public async pingNode(nodeId: number): Promise<boolean> {

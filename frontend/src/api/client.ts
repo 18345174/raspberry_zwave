@@ -2,6 +2,9 @@ import type {
   AuthSessionView,
   ContactConfigRow,
   DriverStatus,
+  FirmwareFileInspection,
+  FirmwareUpdateCapabilities,
+  FirmwareUpdateStatus,
   InclusionChallenge,
   NodeDetail,
   NodeSummary,
@@ -125,6 +128,35 @@ export const apiClient = {
   },
   getContactConfig(nodeId: number) {
     return request<{ items: ContactConfigRow[] }>(`/api/nodes/${nodeId}/contact-config`);
+  },
+  getFirmwareUpdateCapabilities(nodeId: number) {
+    return request<FirmwareUpdateCapabilities>(`/api/nodes/${nodeId}/firmware-update/capabilities`);
+  },
+  getFirmwareUpdateStatus(nodeId: number) {
+    return request<{ status: FirmwareUpdateStatus | null }>(`/api/nodes/${nodeId}/firmware-update/status`);
+  },
+  inspectFirmwareFile(nodeId: number, payload: { filename: string; contentBase64: string }) {
+    return request<FirmwareFileInspection>(`/api/nodes/${nodeId}/firmware-update/inspect`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  startFirmwareUpdate(nodeId: number, payload: {
+    filename: string;
+    contentBase64: string;
+    target: number;
+    resume: boolean;
+    nonSecureTransfer: boolean;
+  }) {
+    return request<FirmwareUpdateStatus>(`/api/nodes/${nodeId}/firmware-update/start`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  abortFirmwareUpdate(nodeId: number) {
+    return request<{ ok: boolean }>(`/api/nodes/${nodeId}/firmware-update/abort`, {
+      method: "POST",
+    });
   },
   refreshNode(nodeId: number) {
     return request<NodeDetail>(`/api/nodes/${nodeId}/refresh`, { method: "POST" });
