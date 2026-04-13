@@ -129,6 +129,18 @@ function formatLogPayload(log: TestLogRecord): string {
   return log.payloadJson ? JSON.stringify(log.payloadJson, null, 2) : "";
 }
 
+function shouldShowLogPayload(log: TestLogRecord): boolean {
+  if (!log.payloadJson) {
+    return false;
+  }
+
+  if (log.stepKey === "precheck.start") {
+    return false;
+  }
+
+  return true;
+}
+
 function translateExecutionStatus(status: ExecutionStatus): string {
   if (status === "pending") {
     return "待执行";
@@ -473,7 +485,6 @@ async function cancelExecution(): Promise<void> {
                 <strong>{{ definition.name }}</strong>
                 <span class="definition-chip">{{ definition.deviceType }}</span>
               </div>
-              <p>{{ definition.description }}</p>
             </div>
           </label>
         </div>
@@ -514,7 +525,6 @@ async function cancelExecution(): Promise<void> {
                 <span class="execution-order">{{ index + 1 }}</span>
                 <div>
                   <strong>{{ item.definition.name }}</strong>
-                  <p>{{ item.definition.description }}</p>
                 </div>
               </div>
               <div class="execution-item-header-side">
@@ -542,8 +552,7 @@ async function cancelExecution(): Promise<void> {
                       <strong>{{ log.message }}</strong>
                       <span>{{ new Date(log.timestamp).toLocaleTimeString() }}</span>
                     </div>
-                    <p class="step-key">{{ log.stepKey }}</p>
-                    <pre v-if="log.payloadJson" class="code-block step-payload">{{ formatLogPayload(log) }}</pre>
+                    <pre v-if="shouldShowLogPayload(log)" class="code-block step-payload">{{ formatLogPayload(log) }}</pre>
                   </div>
                 </div>
               </div>
