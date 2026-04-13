@@ -130,15 +130,8 @@ function formatLogPayload(log: TestLogRecord): string {
 }
 
 function shouldShowLogPayload(log: TestLogRecord): boolean {
-  if (!log.payloadJson) {
-    return false;
-  }
-
-  if (log.stepKey === "precheck.start") {
-    return false;
-  }
-
-  return true;
+  void log;
+  return false;
 }
 
 function translateExecutionStatus(status: ExecutionStatus): string {
