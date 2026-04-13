@@ -23,6 +23,7 @@ export class TestEngineService {
     private readonly zwaveRuntime: ZwaveRuntimeService,
   ) {
     this.storage.saveTestDefinitions(executableDefinitions.map((definition) => definition.meta));
+    this.recoverInterruptedRuns();
   }
 
   public listDefinitions() {
@@ -115,6 +116,15 @@ export class TestEngineService {
     if (!run) {
       throw new Error(`Unknown test run: ${runId}`);
     }
+    if (run.status === "passed" || run.status === "failed" || run.status === "cancelled") {
+      return;
+    }
+
+    if (!this.activeRunId || this.activeRunId !== runId) {
+      this.markRunCancelled(run, "Run cancelled before execution completed.");
+      return;
+    }
+
     this.cancellationFlags.add(runId);
   }
 
@@ -122,6 +132,9 @@ export class TestEngineService {
     const definition = executableDefinitions.find((item) => item.meta.id === definitionId);
     const run = this.storage.getTestRun(runId);
     if (!definition || !run) {
+      return;
+    }
+    if (run.status === "cancelled") {
       return;
     }
 
@@ -269,6 +282,32 @@ export class TestEngineService {
       return refreshed;
     }
     return node;
+  }
+
+  private recoverInterruptedRuns(): void {
+    for (const run of this.storage.listTestRuns()) {
+      if (run.status === "queued" || run.status === "running") {
+        this.markRunCancelled(run, "Run interrupted by service restart.");
+      }
+    }
+  }
+
+  private markRunCancelled(run: TestRunRecord, reason: string): void {
+    run.status = "cancelled";
+    run.finishedAt = run.finishedAt ?? nowIso();
+    if (run.startedAt) {
+      run.durationMs = durationMs(Date.parse(run.startedAt));
+    }
+    run.summaryJson = {
+      status: run.status,
+      message: reason,
+    };
+    run.resultJson = {
+      cancelled: true,
+      reason,
+    };
+    this.storage.updateTestRun(run);
+    this.eventBus.publish({ type: "test.run.finished", timestamp: nowIso(), payload: run });
   }
 
   private matchesValueUpdatePayload(

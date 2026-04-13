@@ -702,14 +702,18 @@ export const usePlatformStore = defineStore("platform", () => {
   }
 
   async function runTest(payload: { testDefinitionId: string; nodeId: number; inputs: Record<string, unknown> }): Promise<void> {
-    const run = await apiClient.createRun(payload);
-    await refreshRuns();
-    await loadRunLogs(run.id);
+    await runAction("启动测试失败", async () => {
+      const run = await apiClient.createRun(payload);
+      await refreshRuns();
+      await loadRunLogs(run.id);
+    });
   }
 
   async function cancelRun(runId: string): Promise<void> {
     await runAction("取消测试失败", async () => {
       await apiClient.cancelRun(runId);
+      await refreshRuns();
+      await loadRunLogs(runId);
     });
   }
 

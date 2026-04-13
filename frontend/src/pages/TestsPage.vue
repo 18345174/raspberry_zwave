@@ -13,6 +13,7 @@ const selectedDefinitionId = ref("");
 const selectedRunId = ref("");
 const supportedDefinitions = ref<TestDefinition[]>([]);
 const loadingSupportedDefinitions = ref(false);
+const submitting = ref(false);
 
 const runnableNodes = computed(() => {
   return [...platform.nodes]
@@ -47,7 +48,7 @@ const activeLogs = computed(() => {
 });
 
 const canStartTest = computed(() => {
-  return Boolean(selectedNode.value && selectedDefinition.value && platform.latestRun?.status !== "running");
+  return Boolean(selectedNode.value && selectedDefinition.value && !submitting.value);
 });
 
 function describeNode(node: NodeSummary): string {
@@ -136,13 +137,18 @@ async function submit(): Promise<void> {
     return;
   }
 
-  await platform.runTest({
-    nodeId: selectedNode.value.nodeId,
-    testDefinitionId: selectedDefinition.value.id,
-    inputs: {},
-  });
+  submitting.value = true;
+  try {
+    await platform.runTest({
+      nodeId: selectedNode.value.nodeId,
+      testDefinitionId: selectedDefinition.value.id,
+      inputs: {},
+    });
 
-  selectedRunId.value = platform.runs[0]?.id ?? "";
+    selectedRunId.value = platform.runs[0]?.id ?? "";
+  } finally {
+    submitting.value = false;
+  }
 }
 </script>
 
