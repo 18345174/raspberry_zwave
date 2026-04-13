@@ -134,6 +134,9 @@ export const apiClient = {
   listDefinitions() {
     return request<{ items: TestDefinition[] }>("/api/tests/definitions");
   },
+  listSupportedDefinitions(nodeId: number) {
+    return request<{ items: TestDefinition[] }>(`/api/tests/definitions/supported/${nodeId}`);
+  },
   listRuns() {
     return request<{ items: TestRunRecord[] }>("/api/tests/runs");
   },

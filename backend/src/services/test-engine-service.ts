@@ -1,4 +1,5 @@
 import type { CreateTestRunInput, NodeDetail, TestLogRecord, TestRunRecord, TestRunStatus } from "../domain/types.js";
+import { CommandClasses, getCCName } from "@zwave-js/core";
 import { DatabaseService } from "../storage/database.js";
 import { EventBus } from "./event-bus.js";
 import { NodeRegistryService } from "./node-registry-service.js";
@@ -26,6 +27,13 @@ export class TestEngineService {
 
   public getDefinition(id: string) {
     return this.storage.getTestDefinition(id);
+  }
+
+  public async listSupportedDefinitions(nodeId: number) {
+    const node = await this.requireNode(nodeId);
+    return executableDefinitions
+      .filter((definition) => definition.supports(node).supported)
+      .map((definition) => definition.meta);
   }
 
   public listRuns(): TestRunRecord[] {
@@ -150,6 +158,49 @@ export class TestEngineService {
         },
         pingNode: async () => this.zwaveRuntime.pingNode(run.nodeId),
         checkNodeHealth: async () => this.zwaveRuntime.healNode(run.nodeId),
+        waitForValueUpdate: async (match) => {
+          return await new Promise<Record<string, unknown>>((resolve, reject) => {
+            let settled = false;
+
+            const cleanup = (): void => {
+              unsubscribe();
+              clearTimeout(timeoutId);
+              clearInterval(cancelCheckId);
+            };
+
+            const settle = (handler: () => void): void => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              cleanup();
+              handler();
+            };
+
+            const unsubscribe = this.eventBus.subscribe((event) => {
+              if (event.type !== "zwave.value.updated" || !event.payload || typeof event.payload !== "object") {
+                return;
+              }
+
+              const payload = event.payload as Record<string, unknown>;
+              if (!this.matchesValueUpdatePayload(run.nodeId, payload, match)) {
+                return;
+              }
+
+              settle(() => resolve(payload));
+            });
+
+            const timeoutId = setTimeout(() => {
+              settle(() => reject(new Error(`Timeout while waiting for ${match.commandClass}.${match.property} update.`)));
+            }, match.timeoutMs);
+
+            const cancelCheckId = setInterval(() => {
+              if (this.cancellationFlags.has(runId)) {
+                settle(() => reject(new Error("Test run cancelled while waiting for value update.")));
+              }
+            }, 200);
+          });
+        },
         wait: async (ms) => {
           await new Promise((resolve) => setTimeout(resolve, ms));
         },
@@ -192,5 +243,49 @@ export class TestEngineService {
       return refreshed;
     }
     return node;
+  }
+
+  private matchesValueUpdatePayload(
+    nodeId: number,
+    payload: Record<string, unknown>,
+    match: {
+      commandClass: string;
+      property: string;
+      endpoint?: number;
+      propertyKey?: string;
+      predicate?: (payload: Record<string, unknown>) => boolean;
+    },
+  ): boolean {
+    if (payload.nodeId !== nodeId) {
+      return false;
+    }
+
+    if (this.normalizeCommandClass(payload.commandClass) !== this.normalizeCommandClass(match.commandClass)) {
+      return false;
+    }
+
+    if (String(payload.property ?? "") !== match.property) {
+      return false;
+    }
+
+    if ((payload.endpoint ?? 0) !== (match.endpoint ?? 0)) {
+      return false;
+    }
+
+    if ((payload.propertyKey != undefined ? String(payload.propertyKey) : undefined) !== match.propertyKey) {
+      return false;
+    }
+
+    return match.predicate ? match.predicate(payload) : true;
+  }
+
+  private normalizeCommandClass(commandClass: unknown): string {
+    if (typeof commandClass === "number") {
+      return String(CommandClasses[commandClass] ?? getCCName(commandClass) ?? commandClass);
+    }
+    if (typeof commandClass === "string") {
+      return commandClass;
+    }
+    return "";
   }
 }

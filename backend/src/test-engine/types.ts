@@ -22,6 +22,14 @@ export interface TestExecutionContext {
   }): Promise<unknown>;
   pingNode(): Promise<boolean>;
   checkNodeHealth(): Promise<unknown>;
+  waitForValueUpdate(match: {
+    commandClass: string;
+    property: string;
+    endpoint?: number;
+    propertyKey?: string;
+    timeoutMs: number;
+    predicate?: (payload: Record<string, unknown>) => boolean;
+  }): Promise<Record<string, unknown>>;
   wait(ms: number): Promise<void>;
   isCancelled(): boolean;
 }

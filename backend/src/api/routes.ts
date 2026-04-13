@@ -206,6 +206,11 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return { items: services.testEngine.listDefinitions() };
   });
 
+  app.get("/api/tests/definitions/supported/:nodeId", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    return { items: await services.testEngine.listSupportedDefinitions(nodeId) };
+  });
+
   app.get("/api/tests/definitions/:id", async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const definition = services.testEngine.getDefinition(request.params.id);
     if (!definition) {

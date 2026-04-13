@@ -1,25 +1,29 @@
 import { DoorLockMode } from "zwave-js";
 
-import { waitForCondition } from "../definition-helpers.js";
 import type { ExecutableTestDefinition } from "../types.js";
 
 function isUnlocked(mode: number | undefined): boolean {
   return mode != undefined && mode !== DoorLockMode.Secured && mode !== DoorLockMode.Unknown;
 }
 
+function isModeMatched(mode: number | undefined, targetMode: DoorLockMode): boolean {
+  if (targetMode === DoorLockMode.Unsecured) {
+    return isUnlocked(mode);
+  }
+  return mode === targetMode;
+}
+
 export const lockBasicDefinition: ExecutableTestDefinition = {
   meta: {
     id: "lock-basic-v1",
     key: "lock-basic",
-    name: "门锁基础开关测试",
+    name: "门锁开关门测试",
     deviceType: "door-lock",
-    version: 2,
+    version: 3,
     enabled: true,
-    description: "基于 Door Lock CC 执行上锁、解锁、状态轮询与超时断言。",
+    description: "自动读取当前门锁状态，切换一次并在 5 秒内等待 Door Lock 上报，再恢复到初始状态。",
     inputSchema: {
-      repeat: { type: "number", default: 1, min: 1, max: 10 },
-      lockTimeoutMs: { type: "number", default: 15000, min: 3000, max: 60000 },
-      unlockTimeoutMs: { type: "number", default: 15000, min: 3000, max: 60000 },
+      reportTimeoutMs: { type: "number", default: 5000, min: 1000, max: 10000 },
     },
   },
   supports(node) {
@@ -28,71 +32,85 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       : { supported: false, reason: "节点未发现 Door Lock CC。" };
   },
   async run(context) {
-    const repeat = Number(context.inputs.repeat ?? 1);
-    const lockTimeoutMs = Number(context.inputs.lockTimeoutMs ?? 15000);
-    const unlockTimeoutMs = Number(context.inputs.unlockTimeoutMs ?? 15000);
+    const reportTimeoutMs = Number(context.inputs.reportTimeoutMs ?? 5000);
 
     const capabilities = await context.invokeCcApi({ commandClass: "Door Lock", method: "getCapabilities" }) as Record<string, unknown> | undefined;
     const initialStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as { currentMode?: number } | undefined;
+    const initialMode = initialStatus?.currentMode;
+
+    if (initialMode == undefined) {
+      throw new Error("未读取到门锁当前状态，无法执行自动开关门测试。");
+    }
+
+    const firstTargetMode = isUnlocked(initialMode) ? DoorLockMode.Secured : DoorLockMode.Unsecured;
+    const restoreTargetMode = isUnlocked(initialMode) ? DoorLockMode.Unsecured : DoorLockMode.Secured;
+    const firstActionLabel = firstTargetMode === DoorLockMode.Unsecured ? "解锁" : "上锁";
+    const restoreActionLabel = restoreTargetMode === DoorLockMode.Unsecured ? "解锁" : "上锁";
 
     await context.log("info", "precheck", "Door Lock CC precheck complete", {
       initialStatus,
       capabilities,
-      repeat,
-      lockTimeoutMs,
-      unlockTimeoutMs,
+      reportTimeoutMs,
+      firstTargetMode,
+      restoreTargetMode,
     });
 
-    for (let round = 1; round <= repeat; round += 1) {
-      await context.log("info", "lock.command", `第 ${round} 轮下发上锁命令`, { targetMode: DoorLockMode.Secured });
-      await context.invokeCcApi({
-        commandClass: "Door Lock",
-        method: "set",
-        args: [DoorLockMode.Secured],
-      });
+    const firstReportPromise = context.waitForValueUpdate({
+      commandClass: "Door Lock",
+      property: "currentMode",
+      timeoutMs: reportTimeoutMs,
+      predicate: (payload) => isModeMatched(Number(payload.newValue), firstTargetMode),
+    });
 
-      const lockStatus = await waitForCondition(
-        context,
-        "lock.wait",
-        lockTimeoutMs,
-        async () => {
-          return context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as Promise<{ currentMode?: number; targetMode?: number }>;
-        },
-        (status) => status.currentMode === DoorLockMode.Secured,
-        (status) => ({ currentMode: status.currentMode, targetMode: status.targetMode }),
-      );
+    await context.log("info", "toggle.command", `下发门锁${firstActionLabel}命令`, { targetMode: firstTargetMode });
+    await context.invokeCcApi({
+      commandClass: "Door Lock",
+      method: "set",
+      args: [firstTargetMode],
+    });
 
-      await context.log("info", "lock.assert", `第 ${round} 轮上锁成功`, lockStatus);
+    const firstReport = await firstReportPromise;
 
-      await context.log("info", "unlock.command", `第 ${round} 轮下发解锁命令`, { targetMode: DoorLockMode.Unsecured });
-      await context.invokeCcApi({
-        commandClass: "Door Lock",
-        method: "set",
-        args: [DoorLockMode.Unsecured],
-      });
+    await context.log("info", "toggle.report", `已在 ${reportTimeoutMs}ms 内收到门锁${firstActionLabel}上报`, firstReport);
 
-      const unlockStatus = await waitForCondition(
-        context,
-        "unlock.wait",
-        unlockTimeoutMs,
-        async () => {
-          return context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as Promise<{ currentMode?: number; targetMode?: number }>;
-        },
-        (status) => isUnlocked(status.currentMode),
-        (status) => ({ currentMode: status.currentMode, targetMode: status.targetMode }),
-      );
-
-      await context.log("info", "unlock.assert", `第 ${round} 轮解锁成功`, unlockStatus);
+    const toggledStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as { currentMode?: number; targetMode?: number } | undefined;
+    if (!isModeMatched(toggledStatus?.currentMode, firstTargetMode)) {
+      throw new Error(`门锁${firstActionLabel}后状态校验失败。`);
     }
 
-    const finalStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as Record<string, unknown> | undefined;
+    await context.log("info", "toggle.assert", `门锁${firstActionLabel}状态校验通过`, toggledStatus);
+
+    const restoreReportPromise = context.waitForValueUpdate({
+      commandClass: "Door Lock",
+      property: "currentMode",
+      timeoutMs: reportTimeoutMs,
+      predicate: (payload) => isModeMatched(Number(payload.newValue), restoreTargetMode),
+    });
+
+    await context.log("info", "restore.command", `下发门锁${restoreActionLabel}命令，恢复初始状态`, { targetMode: restoreTargetMode });
+    await context.invokeCcApi({
+      commandClass: "Door Lock",
+      method: "set",
+      args: [restoreTargetMode],
+    });
+
+    const restoreReport = await restoreReportPromise;
+
+    await context.log("info", "restore.report", `已在 ${reportTimeoutMs}ms 内收到门锁${restoreActionLabel}上报`, restoreReport);
+
+    const finalStatus = await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }) as { currentMode?: number; targetMode?: number } | undefined;
+    if (!isModeMatched(finalStatus?.currentMode, restoreTargetMode)) {
+      throw new Error("门锁恢复初始状态校验失败。");
+    }
+
+    await context.log("info", "restore.assert", "门锁恢复初始状态校验通过", finalStatus);
+
     const refreshed = await context.refreshNode();
 
     return {
-      repeat,
-      lockTimeoutMs,
-      unlockTimeoutMs,
+      reportTimeoutMs,
       initialStatus,
+      toggledStatus,
       finalStatus,
       capabilities,
       finalNodeValueCount: refreshed.values.length,
