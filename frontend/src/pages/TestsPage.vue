@@ -50,6 +50,8 @@ const TEST_DEFINITION_PRIORITY: Record<string, number> = {
   "user-code-edit": 1,
   "user-code-delete": 2,
 };
+const USER_CODE_ADD_KEY = "user-code-add";
+const USER_CODE_DEPENDENT_KEYS = new Set(["user-code-edit", "user-code-delete"]);
 const MANUAL_UNLOCK_LOG_STEP_KEYS = new Set(["manual.start", "manual.wait", "manual.confirmed", "manual.done"]);
 const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "precheck.capabilities"]);
 
@@ -185,6 +187,34 @@ function describeNode(node: NodeSummary): string {
 
 function getDefinitionPriority(definition: TestDefinition): number {
   return TEST_DEFINITION_PRIORITY[definition.key] ?? 100;
+}
+
+function requiresUserCodeAdd(definition: TestDefinition): boolean {
+  return USER_CODE_DEPENDENT_KEYS.has(definition.key);
+}
+
+function isDefinitionSelectable(definition: TestDefinition): boolean {
+  if (!requiresUserCodeAdd(definition)) {
+    return true;
+  }
+  return selectedDefinitionIds.value.includes(selectedNodeDefinitions.value.find((item) => item.key === USER_CODE_ADD_KEY)?.id ?? "");
+}
+
+function normalizeSelectedDefinitionIds(ids: string[]): string[] {
+  const selectedDefinitionsById = new Map(selectedNodeDefinitions.value.map((definition) => [definition.id, definition]));
+  const addDefinition = selectedNodeDefinitions.value.find((definition) => definition.key === USER_CODE_ADD_KEY);
+  const hasUserCodeAdd = addDefinition ? ids.includes(addDefinition.id) : false;
+
+  return ids.filter((id) => {
+    const definition = selectedDefinitionsById.get(id);
+    if (!definition) {
+      return false;
+    }
+    if (!requiresUserCodeAdd(definition)) {
+      return true;
+    }
+    return hasUserCodeAdd;
+  });
 }
 
 function sortDefinitions(definitions: TestDefinition[]): TestDefinition[] {
@@ -333,11 +363,21 @@ function getPlaceholderStepMessage(item: ExecutionItem): string {
 }
 
 function toggleDefinition(definitionId: string): void {
-  if (selectedDefinitionIds.value.includes(definitionId)) {
-    selectedDefinitionIds.value = selectedDefinitionIds.value.filter((item) => item !== definitionId);
+  const definition = selectedNodeDefinitions.value.find((item) => item.id === definitionId);
+  if (!definition) {
     return;
   }
-  selectedDefinitionIds.value = [...selectedDefinitionIds.value, definitionId];
+
+  if (selectedDefinitionIds.value.includes(definitionId)) {
+    selectedDefinitionIds.value = normalizeSelectedDefinitionIds(selectedDefinitionIds.value.filter((item) => item !== definitionId));
+    return;
+  }
+
+  if (!isDefinitionSelectable(definition)) {
+    return;
+  }
+
+  selectedDefinitionIds.value = normalizeSelectedDefinitionIds([...selectedDefinitionIds.value, definitionId]);
 }
 
 function toggleExecutionItem(index: number): void {
@@ -417,7 +457,7 @@ watch(
   selectedNodeDefinitions,
   (definitions) => {
     const allowedIds = new Set(definitions.map((definition) => definition.id));
-    selectedDefinitionIds.value = selectedDefinitionIds.value.filter((id) => allowedIds.has(id));
+    selectedDefinitionIds.value = normalizeSelectedDefinitionIds(selectedDefinitionIds.value.filter((id) => allowedIds.has(id)));
 
     if (pageStage.value !== "devices" && selectedNodeId.value && definitions.length === 0) {
       pageStage.value = "devices";
@@ -603,12 +643,18 @@ async function cancelExecution(): Promise<void> {
 
         <div class="definition-checklist">
           <label v-for="definition in selectedNodeDefinitions" :key="definition.id" class="definition-option">
-            <input :checked="selectedDefinitionIds.includes(definition.id)" type="checkbox" @change="toggleDefinition(definition.id)" />
+            <input
+              :checked="selectedDefinitionIds.includes(definition.id)"
+              :disabled="!isDefinitionSelectable(definition)"
+              type="checkbox"
+              @change="toggleDefinition(definition.id)"
+            />
             <div class="definition-option-body">
               <div class="definition-option-title-row">
                 <strong>{{ definition.name }}</strong>
                 <span class="definition-chip">{{ definition.deviceType }}</span>
               </div>
+              <p v-if="!isDefinitionSelectable(definition)" class="definition-option-note">请先选择“添加 User Code”</p>
             </div>
           </label>
         </div>
@@ -853,6 +899,12 @@ async function cancelExecution(): Promise<void> {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.definition-option-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .definition-option-title-row {
