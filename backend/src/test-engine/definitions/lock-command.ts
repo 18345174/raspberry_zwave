@@ -26,12 +26,10 @@ function createDoorLockCommandDefinition(input: {
       key: input.key,
       name: input.name,
       deviceType: "door-lock",
-      version: 1,
+      version: 2,
       enabled: true,
-      description: input.description,
-      inputSchema: {
-        reportTimeoutMs: { type: "number", default: 5000, min: 1000, max: 10000 },
-      },
+      description: `${input.description} 命令发送后会立即主动查询当前状态，不再等待设备主动上报。`,
+      inputSchema: {},
     },
     supports(node) {
       return node.commandClasses.includes("Door Lock")
@@ -39,10 +37,7 @@ function createDoorLockCommandDefinition(input: {
         : { supported: false, reason: "节点未发现 Door Lock CC。" };
     },
     async run(context) {
-      const reportTimeoutMs = Number(context.inputs.reportTimeoutMs ?? 5000);
-
       await context.log("info", "precheck.start", "正在检查门锁状态", {
-        reportTimeoutMs,
         targetMode: input.targetMode,
         expectedBoltStatus: expectedStatus,
       });
@@ -55,7 +50,6 @@ function createDoorLockCommandDefinition(input: {
       await context.log("info", "precheck.current", `当前门锁状态：${describeBoltStatus(initialStatus?.boltStatus)}`, {
         initialStatus,
         capabilities,
-        reportTimeoutMs,
         targetMode: input.targetMode,
         expectedBoltStatus: expectedStatus,
       });
@@ -65,19 +59,17 @@ function createDoorLockCommandDefinition(input: {
         actionLabel: input.actionLabel,
         targetMode: input.targetMode,
         expectedStatus,
-        reportTimeoutMs,
         successMessage: "单次命令判定结果：通过",
         failureMessage: "单次命令判定结果：失败",
       });
 
       await context.log("info", "result", "最终测试结果：通过", {
         initialBoltStatus: initialStatus?.boltStatus,
-        finalBoltStatus: result.status?.boltStatus ?? result.report?.newValue,
+        finalBoltStatus: result.status?.boltStatus,
         confirmation: result.confirmation,
       });
 
       return {
-        reportTimeoutMs,
         targetMode: input.targetMode,
         expectedBoltStatus: expectedStatus,
         initialStatus,

@@ -18,12 +18,10 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     key: "lock-basic",
     name: "门锁开关门测试",
     deviceType: "door-lock",
-    version: 7,
+    version: 8,
     enabled: true,
-    description: "先读取门锁当前锁舌状态，第一步在 10 秒内确认状态切换成功后，才会继续执行第二步恢复；优先等待 boltStatus 上报，超时后主动查询当前状态。",
-    inputSchema: {
-      reportTimeoutMs: { type: "number", default: 10000, min: 1000, max: 10000 },
-    },
+    description: "先读取门锁当前锁舌状态，发送第一次命令后立即主动查询当前状态；确认成功后继续执行第二步恢复，并再次立即主动查询状态。",
+    inputSchema: {},
   },
   supports(node) {
     return node.commandClasses.includes("Door Lock")
@@ -31,11 +29,7 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       : { supported: false, reason: "节点未发现 Door Lock CC。" };
   },
   async run(context) {
-    const reportTimeoutMs = Number(context.inputs.reportTimeoutMs ?? 10000);
-
-    await context.log("info", "precheck.start", "正在检查门锁状态", {
-      reportTimeoutMs,
-    });
+    await context.log("info", "precheck.start", "正在检查门锁状态");
 
     const [capabilities, initialStatus] = await Promise.all([
       readDoorLockCapabilities(context),
@@ -61,7 +55,6 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     await context.log("info", "precheck.current", `当前门锁状态：${describeBoltStatus(initialBoltStatus)}`, {
       initialStatus,
       capabilities,
-      reportTimeoutMs,
       initialBoltStatus,
       initialUnlocked,
       firstTargetMode,
@@ -75,15 +68,13 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       actionLabel: `第一次${firstActionLabel}`,
       targetMode: firstTargetMode,
       expectedStatus: firstExpectedBoltStatus,
-      reportTimeoutMs,
       successMessage: "第一次判定结果：通过",
       failureMessage: "第一次判定结果：失败",
     });
 
     await context.log("info", "restore.prepare", `第一次命令已确认通过，开始发送第二次${restoreActionLabel}命令`, {
-      reportTimeoutMs,
       firstConfirmation: firstResult.confirmation,
-      firstBoltStatus: firstResult.status?.boltStatus ?? firstResult.report?.newValue,
+      firstBoltStatus: firstResult.status?.boltStatus,
       restoreTargetMode,
       restoreExpectedBoltStatus,
     });
@@ -93,15 +84,14 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
       actionLabel: `第二次${restoreActionLabel}`,
       targetMode: restoreTargetMode,
       expectedStatus: restoreExpectedBoltStatus,
-      reportTimeoutMs,
       successMessage: "第二次判定结果：通过",
       failureMessage: "第二次判定结果：失败",
     });
 
     await context.log("info", "result", "最终测试结果：通过", {
       initialBoltStatus,
-      firstBoltStatus: firstResult.status?.boltStatus ?? firstResult.report?.newValue,
-      finalBoltStatus: restoreResult.status?.boltStatus ?? restoreResult.report?.newValue,
+      firstBoltStatus: firstResult.status?.boltStatus,
+      finalBoltStatus: restoreResult.status?.boltStatus,
       firstConfirmation: firstResult.confirmation,
       restoreConfirmation: restoreResult.confirmation,
     });
@@ -109,12 +99,11 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     const refreshed = await context.refreshNode();
 
     return {
-      reportTimeoutMs,
       initialStatus,
       toggledStatus: firstResult.status,
-      firstBoltStatus: firstResult.status?.boltStatus ?? firstResult.report?.newValue,
+      firstBoltStatus: firstResult.status?.boltStatus,
       finalStatus: restoreResult.status,
-      finalBoltStatus: restoreResult.status?.boltStatus ?? restoreResult.report?.newValue,
+      finalBoltStatus: restoreResult.status?.boltStatus,
       firstConfirmation: firstResult.confirmation,
       restoreConfirmation: restoreResult.confirmation,
       capabilities,

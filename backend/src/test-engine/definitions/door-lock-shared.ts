@@ -15,8 +15,7 @@ export interface DoorLockStatusSnapshot {
 
 export interface DoorLockCommandResult {
   status: DoorLockStatusSnapshot | undefined;
-  report?: Record<string, unknown>;
-  confirmation: "event" | "poll";
+  confirmation: "poll";
 }
 
 export function isUnlocked(mode: number | undefined): boolean {
@@ -74,10 +73,6 @@ function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isBoltStatusTimeout(error: unknown): boolean {
-  return formatErrorMessage(error).includes("Timeout while waiting for Door Lock.boltStatus update.");
-}
-
 export async function performDoorLockCommand(
   context: TestExecutionContext,
   options: {
@@ -85,18 +80,10 @@ export async function performDoorLockCommand(
     actionLabel: string;
     targetMode: DoorLockMode;
     expectedStatus: "locked" | "unlocked";
-    reportTimeoutMs: number;
     successMessage: string;
     failureMessage: string;
   },
 ): Promise<DoorLockCommandResult> {
-  const reportPromise = context.waitForValueUpdate({
-    commandClass: "Door Lock",
-    property: "boltStatus",
-    timeoutMs: options.reportTimeoutMs,
-    predicate: (payload) => String(payload.newValue ?? "") === options.expectedStatus,
-  });
-
   await context.log("info", `${options.phaseKey}.command`, `发送${options.actionLabel}命令`, {
     targetMode: options.targetMode,
     expectedBoltStatus: options.expectedStatus,
@@ -107,30 +94,13 @@ export async function performDoorLockCommand(
     args: [options.targetMode],
   });
 
-  let confirmation: DoorLockCommandResult["confirmation"] = "event";
-  let report: Record<string, unknown> | undefined;
-
   try {
-    report = await reportPromise;
-    await context.log("info", `${options.phaseKey}.report`, `已在 ${options.reportTimeoutMs}ms 内收到目标上报`, report);
-  } catch (error) {
-    if (!isBoltStatusTimeout(error)) {
-      await context.log("error", `${options.phaseKey}.assert`, `${options.failureMessage}（${formatErrorMessage(error)}）`);
-      throw error;
-    }
-
-    confirmation = "poll";
-    await context.log("warn", `${options.phaseKey}.fallback`, `未在 ${options.reportTimeoutMs}ms 内收到 boltStatus 目标上报，改为主动查询门锁状态`, {
+    await context.log("info", `${options.phaseKey}.poll`, "命令已发送，立即主动查询门锁状态", {
       expectedBoltStatus: options.expectedStatus,
       targetMode: options.targetMode,
     });
-  }
-
-  try {
     const status = await readDoorLockStatus(context);
-    if (confirmation === "poll") {
-      await context.log("info", `${options.phaseKey}.fallback`, "主动查询门锁状态完成", status as Record<string, unknown> | undefined);
-    }
+    await context.log("info", `${options.phaseKey}.poll`, "主动查询门锁状态完成", status as Record<string, unknown> | undefined);
 
     if (status?.boltStatus !== options.expectedStatus) {
       throw new Error(`当前 boltStatus 为 ${describeBoltStatus(status?.boltStatus)}，期望 ${describeBoltStatus(options.expectedStatus)}。`);
@@ -142,18 +112,16 @@ export async function performDoorLockCommand(
     await context.log(
       "info",
       `${options.phaseKey}.assert`,
-      confirmation === "event" ? options.successMessage : `${options.successMessage}（主动查询确认）`,
+      `${options.successMessage}（主动查询确认）`,
       {
         ...status,
-        reportSource: confirmation,
-        report,
+        reportSource: "poll",
       },
     );
 
     return {
       status,
-      report,
-      confirmation,
+      confirmation: "poll",
     };
   } catch (error) {
     await context.log("error", `${options.phaseKey}.assert`, `${options.failureMessage}（${formatErrorMessage(error)}）`);
