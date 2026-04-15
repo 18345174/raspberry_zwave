@@ -13,6 +13,10 @@ interface UserCodeReport {
   userCode?: string | Uint8Array;
 }
 
+const USER_CODE_REPORT_TIMEOUT_MS = 1500;
+const USER_CODE_FALLBACK_QUERY_DELAY_MS = 800;
+const USER_CODE_BETWEEN_OPERATIONS_DELAY_MS = 1000;
+
 function normalizeSupportedUsers(value: unknown): number {
   const count = Number(value);
   if (!Number.isInteger(count) || count <= 0) {
@@ -63,6 +67,52 @@ async function runPlaceholderUserCodeTest(context: Parameters<ExecutableTestDefi
   };
 }
 
+async function waitForUserCodeConfirmation(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  userId: number,
+  code: string,
+): Promise<{ source: "event" | "poll"; report?: UserCodeReport }> {
+  const propertyKey = String(userId);
+  const statusPromise = context.waitForValueUpdate({
+    commandClass: "User Code",
+    property: "userIdStatus",
+    propertyKey,
+    timeoutMs: USER_CODE_REPORT_TIMEOUT_MS,
+    predicate: (payload) => Number(payload.newValue) === UserIDStatus.Enabled,
+  });
+  const codePromise = context.waitForValueUpdate({
+    commandClass: "User Code",
+    property: "userCode",
+    propertyKey,
+    timeoutMs: USER_CODE_REPORT_TIMEOUT_MS,
+    predicate: (payload) => String(payload.newValue ?? "") === code,
+  });
+
+  try {
+    await Promise.all([statusPromise, codePromise]);
+    return { source: "event" };
+  } catch {
+    await context.log("warn", "add.fallback", "未在预期时间内收到 User Code 主动上报，等待后改为主动查询确认", {
+      userId,
+      code,
+      reportTimeoutMs: USER_CODE_REPORT_TIMEOUT_MS,
+      fallbackDelayMs: USER_CODE_FALLBACK_QUERY_DELAY_MS,
+    });
+
+    await context.wait(USER_CODE_FALLBACK_QUERY_DELAY_MS);
+    const report = await context.invokeCcApi({
+      commandClass: "User Code",
+      method: "get",
+      args: [userId],
+    }) as UserCodeReport | undefined;
+
+    return {
+      source: "poll",
+      report,
+    };
+  }
+}
+
 export const userCodeAddDefinition: ExecutableTestDefinition = {
   traceCommandClasses: ["User Code"],
   meta: {
@@ -70,7 +120,7 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
     key: "user-code-add",
     name: "添加 User Code",
     deviceType: "door-lock",
-    version: 1,
+    version: 2,
     enabled: true,
     description: "读取设备支持的最大用户数后，从 User ID 1 开始依次批量添加 User Code。",
     inputSchema: {},
@@ -122,18 +172,17 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
         args: [userId, UserIDStatus.Enabled, code],
       });
 
-      const report = await context.invokeCcApi({
-        commandClass: "User Code",
-        method: "get",
-        args: [userId],
-      }) as UserCodeReport | undefined;
+      const confirmation = await waitForUserCodeConfirmation(context, userId, code);
+      const report = confirmation.report;
 
-      const actualCode = normalizeReportCode(report?.userCode);
-      if (report?.userIdStatus !== UserIDStatus.Enabled) {
-        throw new Error(`User ID ${userId} 添加后状态异常：${String(report?.userIdStatus)}。`);
-      }
-      if (actualCode !== code) {
-        throw new Error(`User ID ${userId} 添加后密码异常：期望 ${code}，实际 ${actualCode ?? "-"}`);
+      if (confirmation.source === "poll") {
+        const actualCode = normalizeReportCode(report?.userCode);
+        if (report?.userIdStatus !== UserIDStatus.Enabled) {
+          throw new Error(`User ID ${userId} 添加后状态异常：${String(report?.userIdStatus)}。`);
+        }
+        if (actualCode !== code) {
+          throw new Error(`User ID ${userId} 添加后密码异常：期望 ${code}，实际 ${actualCode ?? "-"}`);
+        }
       }
 
       addedUsers.push({ userId, code });
@@ -142,11 +191,12 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
         currentUserId: userId,
         code,
         supportedUsers,
+        confirmationSource: confirmation.source,
       });
 
       if (userId < supportedUsers) {
-        // Avoid overwhelming the lock with back-to-back encrypted writes.
-        await context.wait(500);
+        // Leave enough time for S2 nonce/span state and door-lock notifications to settle.
+        await context.wait(USER_CODE_BETWEEN_OPERATIONS_DELAY_MS);
       }
     }
 
