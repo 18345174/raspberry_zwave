@@ -50,6 +50,7 @@ const TEST_DEFINITION_PRIORITY: Record<string, number> = {
   "user-code-edit": 1,
   "user-code-delete": 2,
 };
+const MANUAL_UNLOCK_LOG_STEP_KEYS = new Set(["manual.start", "manual.wait", "manual.confirmed", "manual.done"]);
 const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "precheck.capabilities"]);
 
 const runnableNodes = computed(() => {
@@ -228,7 +229,9 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
   if (!item.runId) {
     return [];
   }
-  const logs = (platform.runLogs[item.runId] ?? []).filter((log) => !HIDDEN_LOG_STEP_KEYS.has(log.stepKey));
+  const sourceLogs = platform.runLogs[item.runId] ?? [];
+  const hasManualUnlockFlow = sourceLogs.some((log) => MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
+  const logs = sourceLogs.filter((log) => !HIDDEN_LOG_STEP_KEYS.has(log.stepKey) && !MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
   const collapsedLogs: TestLogRecord[] = [];
   const progressLogIndexes = new Map<string, number>();
 
@@ -248,6 +251,18 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
     collapsedLogs[existingIndex] = log;
   }
 
+  if (hasManualUnlockFlow) {
+    const latestManualLog = [...sourceLogs].reverse().find((log) => MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
+    collapsedLogs.push({
+      id: `${item.runId}-manual-summary`,
+      testRunId: item.runId,
+      timestamp: latestManualLog?.timestamp ?? new Date().toISOString(),
+      level: "info",
+      stepKey: "manual.summary",
+      message: "进行随机 User Code 测试",
+    });
+  }
+
   return collapsedLogs;
 }
 
@@ -255,6 +270,19 @@ function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord
   const log = logs[index];
   if (log?.level === "error") {
     return "failed";
+  }
+
+  if (log?.stepKey === "manual.summary") {
+    const status = getExecutionItemStatus(item);
+    if (status === "failed" || status === "cancelled") {
+      return "failed";
+    }
+    if (status === "running" || status === "queued") {
+      return "running";
+    }
+    if (status === "passed") {
+      return "passed";
+    }
   }
 
   if (log?.stepKey === "add.progress") {
