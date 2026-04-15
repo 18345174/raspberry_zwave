@@ -13,6 +13,11 @@ interface UserCodeReport {
   userCode?: string | Uint8Array;
 }
 
+interface ManualVerificationTarget {
+  userId: number;
+  code: string;
+}
+
 const USER_CODE_REPORT_TIMEOUT_MS = 1500;
 const USER_CODE_FALLBACK_QUERY_DELAY_MS = 800;
 const USER_CODE_BETWEEN_OPERATIONS_DELAY_MS = 1000;
@@ -30,6 +35,18 @@ function normalizeSupportedUsers(value: unknown): number {
 
 function formatUserCode(userId: number): string {
   return String(userId).padStart(Math.max(4, String(userId).length), "0");
+}
+
+function formatEditedUserCode(code: string, supportedChars?: string): string {
+  const normalized = code.length >= 4 ? code : code.padStart(4, "0");
+  const candidateChars = (supportedChars && supportedChars.length > 0 ? supportedChars : "0123456789").split("");
+  const replacementHead = candidateChars.find((char) => char !== normalized[0]);
+
+  if (!replacementHead) {
+    throw new Error("设备支持的 User Code 字符集不足以生成不同的编辑密码。");
+  }
+
+  return `${replacementHead}${normalized.slice(1)}`;
 }
 
 function normalizeReportCode(value: string | Uint8Array | undefined): string | undefined {
@@ -66,14 +83,16 @@ function randomIntInclusive(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function pickRandomUserIds(maxUserId: number): number[] {
+function pickRandomUserIds(maxUserId: number, explicitCount?: number): number[] {
   if (maxUserId <= 0) {
     return [];
   }
 
   const upperBound = Math.min(USER_CODE_MANUAL_UNLOCK_MAX_COUNT, maxUserId);
   const lowerBound = Math.min(USER_CODE_MANUAL_UNLOCK_MIN_COUNT, upperBound);
-  const targetCount = randomIntInclusive(lowerBound, upperBound);
+  const targetCount = explicitCount == undefined
+    ? randomIntInclusive(lowerBound, upperBound)
+    : Math.max(1, Math.min(explicitCount, maxUserId));
   const pool = Array.from({ length: maxUserId }, (_, index) => index + 1);
 
   for (let index = pool.length - 1; index > 0; index -= 1) {
@@ -84,52 +103,99 @@ function pickRandomUserIds(maxUserId: number): number[] {
   return pool.slice(0, targetCount);
 }
 
-async function runPlaceholderUserCodeTest(context: Parameters<ExecutableTestDefinition["run"]>[0], action: string) {
-  await context.log("info", "placeholder.start", `${action} User Code 测试项当前为占位卡片，暂未实现实际设备操作。`);
+async function readSupportedUsersAndCapabilities(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  capabilityFallbackStepKey: string,
+): Promise<{ supportedUsers: number; capabilities?: UserCodeCapabilities }> {
+  const supportedUsersRaw = await context.invokeCcApi({ commandClass: "User Code", method: "getUsersCount" });
+  let capabilities: unknown;
+
+  try {
+    capabilities = await context.invokeCcApi({ commandClass: "User Code", method: "getCapabilities" });
+  } catch (error) {
+    if (!isUnsupportedCommandError(error)) {
+      throw error;
+    }
+
+    await context.log("warn", capabilityFallbackStepKey, "设备不支持 User Code CapabilitiesGet，跳过能力读取，继续执行批量操作", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   return {
-    placeholder: true,
-    action,
+    supportedUsers: normalizeSupportedUsers(supportedUsersRaw),
+    capabilities: (capabilities ?? undefined) as UserCodeCapabilities | undefined,
   };
 }
 
-async function waitForUserCodeConfirmation(
+async function getUserCodeReport(
   context: Parameters<ExecutableTestDefinition["run"]>[0],
   userId: number,
-  code: string,
+): Promise<UserCodeReport | undefined> {
+  return await context.invokeCcApi({
+    commandClass: "User Code",
+    method: "get",
+    args: [userId],
+  }) as UserCodeReport | undefined;
+}
+
+function ensureExpectedUserCodeReport(
+  report: UserCodeReport | undefined,
+  userId: number,
+  expectedStatus: UserIDStatus,
+  expectedCode: string,
+  actionLabel: string,
+): void {
+  const actualCode = normalizeReportCode(report?.userCode) ?? "";
+  if (report?.userIdStatus !== expectedStatus) {
+    throw new Error(`User ID ${userId} ${actionLabel}后状态异常：${String(report?.userIdStatus)}。`);
+  }
+  if (actualCode !== expectedCode) {
+    throw new Error(`User ID ${userId} ${actionLabel}后密码异常：期望 ${expectedCode || "(empty)"}，实际 ${actualCode || "(empty)"}。`);
+  }
+}
+
+async function waitForUserCodeState(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  input: {
+    userId: number;
+    expectedStatus: UserIDStatus;
+    expectedCode: string;
+    fallbackStepKey: string;
+    fallbackMessage: string;
+    actionLabel: string;
+  },
 ): Promise<{ source: "event" | "poll"; report?: UserCodeReport }> {
-  const propertyKey = String(userId);
+  const propertyKey = String(input.userId);
   const statusPromise = context.waitForValueUpdate({
     commandClass: "User Code",
     property: "userIdStatus",
     propertyKey,
     timeoutMs: USER_CODE_REPORT_TIMEOUT_MS,
-    predicate: (payload) => Number(payload.newValue) === UserIDStatus.Enabled,
+    predicate: (payload) => Number(payload.newValue) === input.expectedStatus,
   });
   const codePromise = context.waitForValueUpdate({
     commandClass: "User Code",
     property: "userCode",
     propertyKey,
     timeoutMs: USER_CODE_REPORT_TIMEOUT_MS,
-    predicate: (payload) => String(payload.newValue ?? "") === code,
+    predicate: (payload) => String(payload.newValue ?? "") === input.expectedCode,
   });
 
   try {
     await Promise.all([statusPromise, codePromise]);
     return { source: "event" };
   } catch {
-    await context.log("warn", "add.fallback", "未在预期时间内收到 User Code 主动上报，等待后改为主动查询确认", {
-      userId,
-      code,
+    await context.log("warn", input.fallbackStepKey, input.fallbackMessage, {
+      userId: input.userId,
+      code: input.expectedCode,
       reportTimeoutMs: USER_CODE_REPORT_TIMEOUT_MS,
       fallbackDelayMs: USER_CODE_FALLBACK_QUERY_DELAY_MS,
     });
 
     await context.wait(USER_CODE_FALLBACK_QUERY_DELAY_MS);
-    const report = await context.invokeCcApi({
-      commandClass: "User Code",
-      method: "get",
-      args: [userId],
-    }) as UserCodeReport | undefined;
+    const report = await getUserCodeReport(context, input.userId);
+    ensureExpectedUserCodeReport(report, input.userId, input.expectedStatus, input.expectedCode, input.actionLabel);
 
     return {
       source: "poll",
@@ -146,6 +212,9 @@ async function waitForManualKeypadUnlock(
     type: "zwave.node.notification",
     timeoutMs: USER_CODE_MANUAL_UNLOCK_TIMEOUT_MS,
     predicate: (payload) => {
+      if (Number(payload.nodeId) !== context.node.nodeId) {
+        return false;
+      }
       if (String(payload.commandClass ?? "") !== "Notification") {
         return false;
       }
@@ -156,6 +225,79 @@ async function waitForManualKeypadUnlock(
         && Number(args.event) === 6
         && Number(parameters.userId) === userId;
     },
+  });
+}
+
+async function waitForManualInvalidCode(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+): Promise<Record<string, unknown>> {
+  return await context.waitForEvent({
+    type: "zwave.node.notification",
+    timeoutMs: USER_CODE_MANUAL_UNLOCK_TIMEOUT_MS,
+    predicate: (payload) => {
+      if (Number(payload.nodeId) !== context.node.nodeId) {
+        return false;
+      }
+      if (String(payload.commandClass ?? "") !== "Notification") {
+        return false;
+      }
+
+      const args = (payload.args ?? {}) as Record<string, unknown>;
+      return Number(args.type) === 7 && Number(args.event) === 4;
+    },
+  });
+}
+
+async function runManualVerificationSequence(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  input: {
+    targets: ManualVerificationTarget[];
+    startMessage: string;
+    doneMessage: string;
+    promptMessage(target: ManualVerificationTarget): string;
+    promptMeta?(target: ManualVerificationTarget, sequence: number, totalCount: number): string | undefined;
+    successMessage(target: ManualVerificationTarget): string;
+    waitForExpectedEvent(target: ManualVerificationTarget): Promise<Record<string, unknown>>;
+  },
+): Promise<void> {
+  await context.log("info", "manual.start", input.startMessage, {
+    userIds: input.targets.map((target) => target.userId),
+    codes: input.targets.map((target) => target.code),
+    timeoutMsPerUser: USER_CODE_MANUAL_UNLOCK_TIMEOUT_MS,
+  });
+
+  for (let index = 0; index < input.targets.length; index += 1) {
+    const target = input.targets[index];
+    const sequence = index + 1;
+    const totalCount = input.targets.length;
+
+    await context.log("info", "manual.wait", input.promptMessage(target), {
+      userId: target.userId,
+      code: target.code,
+      sequence,
+      totalCount,
+      promptMessage: input.promptMessage(target),
+      promptMeta: input.promptMeta?.(target, sequence, totalCount),
+    });
+
+    const notification = await input.waitForExpectedEvent(target);
+
+    await context.log("info", "manual.confirmed", input.successMessage(target), {
+      userId: target.userId,
+      code: target.code,
+      sequence,
+      totalCount,
+      notification,
+    });
+
+    if (index < input.targets.length - 1) {
+      await context.wait(300);
+    }
+  }
+
+  await context.log("info", "manual.done", input.doneMessage, {
+    userIds: input.targets.map((target) => target.userId),
+    codes: input.targets.map((target) => target.code),
   });
 }
 
@@ -179,23 +321,7 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
   async run(context) {
     await context.log("info", "precheck.start", "开始读取 User Code 用户数量");
 
-    const supportedUsersRaw = await context.invokeCcApi({ commandClass: "User Code", method: "getUsersCount" });
-    let capabilities: unknown;
-
-    try {
-      capabilities = await context.invokeCcApi({ commandClass: "User Code", method: "getCapabilities" });
-    } catch (error) {
-      if (!isUnsupportedCommandError(error)) {
-        throw error;
-      }
-
-      await context.log("warn", "precheck.capabilities", "设备不支持 User Code CapabilitiesGet，跳过能力读取，继续执行批量添加", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    const supportedUsers = normalizeSupportedUsers(supportedUsersRaw);
-    const normalizedCapabilities = (capabilities ?? undefined) as UserCodeCapabilities | undefined;
+    const { supportedUsers, capabilities: normalizedCapabilities } = await readSupportedUsersAndCapabilities(context, "precheck.capabilities");
     ensureAddIsSupported(normalizedCapabilities);
 
     await context.log("info", "precheck.ready", `设备支持 ${supportedUsers} 个 User Code 用户位，开始批量添加`, {
@@ -218,18 +344,14 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
         args: [userId, UserIDStatus.Enabled, code],
       });
 
-      const confirmation = await waitForUserCodeConfirmation(context, userId, code);
-      const report = confirmation.report;
-
-      if (confirmation.source === "poll") {
-        const actualCode = normalizeReportCode(report?.userCode);
-        if (report?.userIdStatus !== UserIDStatus.Enabled) {
-          throw new Error(`User ID ${userId} 添加后状态异常：${String(report?.userIdStatus)}。`);
-        }
-        if (actualCode !== code) {
-          throw new Error(`User ID ${userId} 添加后密码异常：期望 ${code}，实际 ${actualCode ?? "-"}`);
-        }
-      }
+      const confirmation = await waitForUserCodeState(context, {
+        userId,
+        expectedStatus: UserIDStatus.Enabled,
+        expectedCode: code,
+        fallbackStepKey: "add.fallback",
+        fallbackMessage: "未在预期时间内收到 User Code 主动上报，等待后改为主动查询确认",
+        actionLabel: "添加",
+      });
 
       addedUsers.push({ userId, code });
 
@@ -252,37 +374,19 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
       lastCode: addedUsers[addedUsers.length - 1]?.code,
     });
 
-    const manualUnlockUserIds = pickRandomUserIds(supportedUsers);
+    const manualUnlockTargets = pickRandomUserIds(supportedUsers).map((userId) => ({
+      userId,
+      code: formatUserCode(userId),
+    }));
 
-    await context.log("info", "manual.start", `开始执行 ${manualUnlockUserIds.length} 组随机 User Code 手动解锁验证`, {
-      userIds: manualUnlockUserIds,
-      timeoutMsPerUser: USER_CODE_MANUAL_UNLOCK_TIMEOUT_MS,
-    });
-
-    for (let index = 0; index < manualUnlockUserIds.length; index += 1) {
-      const userId = manualUnlockUserIds[index];
-      await context.log("info", "manual.wait", `请使用 User ID：${userId} 的 User Code 在设备上手动解锁`, {
-        userId,
-        sequence: index + 1,
-        totalCount: manualUnlockUserIds.length,
-      });
-
-      const notification = await waitForManualKeypadUnlock(context, userId);
-
-      await context.log("info", "manual.confirmed", `已收到 User ID：${userId} 的手动解锁上报`, {
-        userId,
-        sequence: index + 1,
-        totalCount: manualUnlockUserIds.length,
-        notification,
-      });
-
-      if (index < manualUnlockUserIds.length - 1) {
-        await context.wait(300);
-      }
-    }
-
-    await context.log("info", "manual.done", "随机 User Code 手动解锁验证完成", {
-      userIds: manualUnlockUserIds,
+    await runManualVerificationSequence(context, {
+      targets: manualUnlockTargets,
+      startMessage: `开始执行 ${manualUnlockTargets.length} 组随机 User Code 手动解锁验证`,
+      doneMessage: "随机 User Code 手动解锁验证完成",
+      promptMessage: (target) => `请使用 User ID：${target.userId} 的 User Code 在设备上手动解锁`,
+      promptMeta: (_target, sequence, totalCount) => `第 ${sequence} / ${totalCount} 组，检测到解锁上报后会自动进入下一组。`,
+      successMessage: (target) => `已收到 User ID：${target.userId} 的手动解锁上报`,
+      waitForExpectedEvent: (target) => waitForManualKeypadUnlock(context, target.userId),
     });
 
     return {
@@ -291,7 +395,7 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
       firstUser: addedUsers[0],
       lastUser: addedUsers[addedUsers.length - 1],
       totalAdded: addedUsers.length,
-      manualUnlockUserIds,
+      manualUnlockUserIds: manualUnlockTargets.map((target) => target.userId),
     };
   },
 };
@@ -303,9 +407,9 @@ export const userCodeEditDefinition: ExecutableTestDefinition = {
     key: "user-code-edit",
     name: "编辑 User Code",
     deviceType: "door-lock",
-    version: 1,
+    version: 2,
     enabled: true,
-    description: "编辑指定 User Code 的占位测试项。",
+    description: "从已添加的 User Code 中随机挑选若干项进行修改，并通过人工解锁验证修改结果。",
     inputSchema: {},
   },
   supports(node) {
@@ -314,7 +418,79 @@ export const userCodeEditDefinition: ExecutableTestDefinition = {
       : { supported: false, reason: "节点未发现 User Code CC。" };
   },
   async run(context) {
-    return await runPlaceholderUserCodeTest(context, "编辑");
+    await context.log("info", "precheck.start", "开始读取 User Code 用户数量，准备随机编辑");
+
+    const { supportedUsers, capabilities } = await readSupportedUsersAndCapabilities(context, "precheck.capabilities");
+    ensureAddIsSupported(capabilities);
+
+    const targetUserIds = pickRandomUserIds(supportedUsers);
+    const editedUsers: ManualVerificationTarget[] = [];
+
+    await context.log("info", "precheck.ready", `设备支持 ${supportedUsers} 个 User Code 用户位，开始随机编辑 ${targetUserIds.length} 项`, {
+      supportedUsers,
+      targetUserIds,
+    });
+
+    for (let index = 0; index < targetUserIds.length; index += 1) {
+      const userId = targetUserIds[index];
+      const report = await getUserCodeReport(context, userId);
+      const existingCode = normalizeReportCode(report?.userCode) ?? "";
+
+      if (report?.userIdStatus !== UserIDStatus.Enabled || existingCode.length < 4) {
+        throw new Error(`User ID ${userId} 当前未处于可编辑状态，请先完成添加 User Code 测试。`);
+      }
+
+      const updatedCode = formatEditedUserCode(existingCode, capabilities?.supportedASCIIChars);
+
+      await context.invokeCcApi({
+        commandClass: "User Code",
+        method: "set",
+        args: [userId, UserIDStatus.Enabled, updatedCode],
+      });
+
+      const confirmation = await waitForUserCodeState(context, {
+        userId,
+        expectedStatus: UserIDStatus.Enabled,
+        expectedCode: updatedCode,
+        fallbackStepKey: "edit.fallback",
+        fallbackMessage: "未在预期时间内收到编辑后的 User Code 主动上报，等待后改为主动查询确认",
+        actionLabel: "编辑",
+      });
+
+      editedUsers.push({ userId, code: updatedCode });
+
+      await context.log("info", "edit.progress", `已完成 ${index + 1}/${targetUserIds.length} 个 User Code 编辑`, {
+        currentUserId: userId,
+        updatedCode,
+        totalTargets: targetUserIds.length,
+        confirmationSource: confirmation.source,
+      });
+
+      if (index < targetUserIds.length - 1) {
+        await context.wait(USER_CODE_BETWEEN_OPERATIONS_DELAY_MS);
+      }
+    }
+
+    await context.log("info", "result", "随机编辑 User Code 完成", {
+      totalEdited: editedUsers.length,
+      editedUserIds: editedUsers.map((item) => item.userId),
+    });
+
+    await runManualVerificationSequence(context, {
+      targets: editedUsers,
+      startMessage: `开始执行 ${editedUsers.length} 组随机 User Code 编辑后手动解锁验证`,
+      doneMessage: "随机 User Code 编辑后手动解锁验证完成",
+      promptMessage: (target) => `请使用 User Code：${target.code} 在设备上手动解锁`,
+      promptMeta: (target, sequence, totalCount) => `当前验证 User ID：${target.userId}，第 ${sequence} / ${totalCount} 组，检测到对应 User ID 的解锁上报后会自动进入下一组。`,
+      successMessage: (target) => `已收到 User ID：${target.userId} 的编辑后手动解锁上报`,
+      waitForExpectedEvent: (target) => waitForManualKeypadUnlock(context, target.userId),
+    });
+
+    return {
+      supportedUsers,
+      totalEdited: editedUsers.length,
+      editedUsers,
+    };
   },
 };
 
@@ -325,9 +501,9 @@ export const userCodeDeleteDefinition: ExecutableTestDefinition = {
     key: "user-code-delete",
     name: "删除 User Code",
     deviceType: "door-lock",
-    version: 1,
+    version: 2,
     enabled: true,
-    description: "删除指定 User Code 的占位测试项。",
+    description: "从已添加的 User Code 中随机挑选若干项删除，并通过无效密码上报验证删除结果。",
     inputSchema: {},
   },
   supports(node) {
@@ -336,6 +512,76 @@ export const userCodeDeleteDefinition: ExecutableTestDefinition = {
       : { supported: false, reason: "节点未发现 User Code CC。" };
   },
   async run(context) {
-    return await runPlaceholderUserCodeTest(context, "删除");
+    await context.log("info", "precheck.start", "开始读取 User Code 用户数量，准备随机删除");
+
+    const { supportedUsers, capabilities } = await readSupportedUsersAndCapabilities(context, "precheck.capabilities");
+    ensureAddIsSupported(capabilities);
+
+    const targetUserIds = pickRandomUserIds(supportedUsers);
+    const deletedUsers: ManualVerificationTarget[] = [];
+
+    await context.log("info", "precheck.ready", `设备支持 ${supportedUsers} 个 User Code 用户位，开始随机删除 ${targetUserIds.length} 项`, {
+      supportedUsers,
+      targetUserIds,
+    });
+
+    for (let index = 0; index < targetUserIds.length; index += 1) {
+      const userId = targetUserIds[index];
+      const report = await getUserCodeReport(context, userId);
+      const existingCode = normalizeReportCode(report?.userCode) ?? "";
+
+      if (report?.userIdStatus !== UserIDStatus.Enabled || existingCode.length < 4) {
+        throw new Error(`User ID ${userId} 当前未处于可删除状态，请先完成添加 User Code 测试。`);
+      }
+
+      await context.invokeCcApi({
+        commandClass: "User Code",
+        method: "clear",
+        args: [userId],
+      });
+
+      const confirmation = await waitForUserCodeState(context, {
+        userId,
+        expectedStatus: UserIDStatus.Available,
+        expectedCode: "",
+        fallbackStepKey: "delete.fallback",
+        fallbackMessage: "未在预期时间内收到删除后的 User Code 主动上报，等待后改为主动查询确认",
+        actionLabel: "删除",
+      });
+
+      deletedUsers.push({ userId, code: existingCode });
+
+      await context.log("info", "delete.progress", `已完成 ${index + 1}/${targetUserIds.length} 个 User Code 删除`, {
+        currentUserId: userId,
+        deletedCode: existingCode,
+        totalTargets: targetUserIds.length,
+        confirmationSource: confirmation.source,
+      });
+
+      if (index < targetUserIds.length - 1) {
+        await context.wait(USER_CODE_BETWEEN_OPERATIONS_DELAY_MS);
+      }
+    }
+
+    await context.log("info", "result", "随机删除 User Code 完成", {
+      totalDeleted: deletedUsers.length,
+      deletedUserIds: deletedUsers.map((item) => item.userId),
+    });
+
+    await runManualVerificationSequence(context, {
+      targets: deletedUsers,
+      startMessage: `开始执行 ${deletedUsers.length} 组随机 User Code 删除后无效密码验证`,
+      doneMessage: "随机 User Code 删除后无效密码验证完成",
+      promptMessage: (target) => `请使用已删除的 User Code：${target.code} 尝试解锁设备`,
+      promptMeta: (_target, sequence, totalCount) => `第 ${sequence} / ${totalCount} 组，检测到无效密码上报后会自动进入下一组。`,
+      successMessage: (target) => `已收到 User ID：${target.userId} 删除后的无效密码上报`,
+      waitForExpectedEvent: () => waitForManualInvalidCode(context),
+    });
+
+    return {
+      supportedUsers,
+      totalDeleted: deletedUsers.length,
+      deletedUsers,
+    };
   },
 };

@@ -24,9 +24,8 @@ interface DeviceSupportRecord {
 
 interface ManualUnlockPrompt {
   definitionName: string;
-  userId: number;
-  sequence: number;
-  totalCount: number;
+  promptMessage: string;
+  promptMeta: string;
 }
 
 const TERMINAL_STATUSES = new Set<TestRunRecord["status"]>(["passed", "failed", "cancelled"]);
@@ -53,7 +52,7 @@ const TEST_DEFINITION_PRIORITY: Record<string, number> = {
 const USER_CODE_ADD_KEY = "user-code-add";
 const USER_CODE_DEPENDENT_KEYS = new Set(["user-code-edit", "user-code-delete"]);
 const MANUAL_UNLOCK_LOG_STEP_KEYS = new Set(["manual.start", "manual.wait", "manual.confirmed", "manual.done"]);
-const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "precheck.capabilities"]);
+const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "edit.fallback", "delete.fallback", "precheck.capabilities"]);
 
 const runnableNodes = computed(() => {
   return [...platform.nodes]
@@ -157,19 +156,25 @@ const activeManualUnlockPrompt = computed<ManualUnlockPrompt | null>(() => {
   }
 
   const payload = latestPrompt.payloadJson ?? {};
-  const userId = Number(payload.userId);
-  const sequence = Number(payload.sequence);
-  const totalCount = Number(payload.totalCount);
+  const promptMessage = typeof payload.promptMessage === "string" && payload.promptMessage.trim().length
+    ? payload.promptMessage
+    : Number.isInteger(Number(payload.userId)) && Number(payload.userId) > 0
+      ? `请使用 User ID：${Number(payload.userId)} 的 User Code 在设备上手动解锁`
+      : "";
+  const promptMeta = typeof payload.promptMeta === "string" && payload.promptMeta.trim().length
+    ? payload.promptMeta
+    : Number.isInteger(Number(payload.sequence)) && Number(payload.sequence) > 0 && Number.isInteger(Number(payload.totalCount)) && Number(payload.totalCount) > 0
+      ? `第 ${Number(payload.sequence)} / ${Number(payload.totalCount)} 组，检测到预期上报后会自动进入下一组。`
+      : "";
 
-  if (!Number.isInteger(userId) || userId <= 0) {
+  if (!promptMessage) {
     return null;
   }
 
   return {
     definitionName: activeItem.definition.name,
-    userId,
-    sequence: Number.isInteger(sequence) && sequence > 0 ? sequence : 1,
-    totalCount: Number.isInteger(totalCount) && totalCount > 0 ? totalCount : 1,
+    promptMessage,
+    promptMeta,
   };
 });
 
@@ -672,8 +677,8 @@ async function cancelExecution(): Promise<void> {
           <div class="manual-unlock-modal">
             <p class="section-kicker">人工验证</p>
             <h4>{{ activeManualUnlockPrompt.definitionName }}</h4>
-            <p class="manual-unlock-message">请使用 User ID：{{ activeManualUnlockPrompt.userId }} 的 User Code 在设备上手动解锁</p>
-            <p class="manual-unlock-meta">第 {{ activeManualUnlockPrompt.sequence }} / {{ activeManualUnlockPrompt.totalCount }} 组，检测到解锁上报后会自动进入下一组。</p>
+            <p class="manual-unlock-message">{{ activeManualUnlockPrompt.promptMessage }}</p>
+            <p v-if="activeManualUnlockPrompt.promptMeta" class="manual-unlock-meta">{{ activeManualUnlockPrompt.promptMeta }}</p>
           </div>
         </div>
 
