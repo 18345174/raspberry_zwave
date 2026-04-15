@@ -11,6 +11,12 @@ interface SupportedEndpointResult {
   commandClasses: CommandClassSnapshot[];
 }
 
+interface FlattenedCcRow {
+  endpointIndex: number;
+  endpointLabel?: string;
+  commandClass: CommandClassSnapshot;
+}
+
 interface SupportedCcReadResult {
   commandClasses: CommandClassSnapshot[];
   endpoints: SupportedEndpointResult[];
@@ -101,32 +107,43 @@ function normalizeEndpoints(endpoints: EndpointSnapshot[]): SupportedEndpointRes
     .sort((left, right) => left.index - right.index);
 }
 
+function flattenCommandClassRows(result?: SupportedCcReadResult): FlattenedCcRow[] {
+  if (!result) {
+    return [];
+  }
+
+  return result.endpoints.flatMap((endpoint) =>
+    endpoint.commandClasses.map((commandClass) => ({
+      endpointIndex: endpoint.index,
+      endpointLabel: endpoint.label,
+      commandClass,
+    })),
+  );
+}
+
 function buildCopyText(nodeId: number, result: SupportedCcReadResult): string {
   const node = platform.nodes.find((item) => item.nodeId === nodeId);
+  const rows = flattenCommandClassRows(result);
   const lines = [
     "====== Supported CC ======",
     `Node: #${nodeId} ${node?.name || node?.product || ""}`.trim(),
     `Read At: ${formatReadTime(result.readAt)}`,
     "",
-    "All Command Classes:",
+    "Endpoint\tEndpoint Label\tCC ID\tCC Name\tVersion",
   ];
 
-  if (result.commandClasses.length === 0) {
-    lines.push("- (empty)");
+  if (rows.length === 0) {
+    lines.push("(empty)");
   } else {
-    lines.push(...result.commandClasses.map((item) => `- ${formatCommandClassWithId(item)}`));
-  }
-
-  for (const endpoint of result.endpoints) {
-    lines.push("");
-    lines.push(`Endpoint ${endpoint.index}${endpoint.label ? ` - ${endpoint.label}` : ""}:`);
-
-    if (endpoint.commandClasses.length === 0) {
-      lines.push("- (empty)");
-      continue;
-    }
-
-    lines.push(...endpoint.commandClasses.map((item) => `- ${formatCommandClassWithId(item)}`));
+    lines.push(
+      ...rows.map((row) => [
+        row.endpointIndex,
+        row.endpointLabel || "-",
+        formatCommandClassId(row.commandClass.id),
+        row.commandClass.name,
+        row.commandClass.version != undefined ? `v${row.commandClass.version}` : "-",
+      ].join("\t")),
+    );
   }
 
   return lines.join("\n");
@@ -287,51 +304,39 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
           <div class="cc-result-card">
             <div class="cc-result-heading">
               <div>
-                <p class="cc-result-title">节点级汇总</p>
+                <p class="cc-result-title">CC 列表</p>
                 <p class="cc-read-meta">最近读取：{{ formatReadTime(getActiveReadResult()?.readAt) }}</p>
               </div>
-              <span class="cc-count">共 {{ getActiveReadResult()?.commandClasses.length ?? 0 }} 个</span>
+              <span class="cc-count">共 {{ flattenCommandClassRows(getActiveReadResult()).length }} 行</span>
             </div>
 
-            <div v-if="(getActiveReadResult()?.commandClasses.length ?? 0) > 0" class="cc-chip-list">
-              <span
-                v-for="commandClass in getActiveReadResult()?.commandClasses ?? []"
-                :key="`${activeNodeId}-${commandClass.id}-${commandClass.name}`"
-                class="cc-chip"
-              >
-                {{ formatCommandClassWithId(commandClass) }}
-              </span>
+            <div v-if="flattenCommandClassRows(getActiveReadResult()).length > 0" class="cc-table-wrap">
+              <table class="cc-table">
+                <thead>
+                  <tr>
+                    <th>Endpoint</th>
+                    <th>Endpoint 名称</th>
+                    <th>CC ID</th>
+                    <th>CC 名称</th>
+                    <th>版本</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in flattenCommandClassRows(getActiveReadResult())"
+                    :key="`${activeNodeId}-${row.endpointIndex}-${row.commandClass.id}-${row.commandClass.name}`"
+                  >
+                    <td>{{ row.endpointIndex }}</td>
+                    <td>{{ row.endpointLabel || '未命名 Endpoint' }}</td>
+                    <td>{{ formatCommandClassId(row.commandClass.id) }}</td>
+                    <td>{{ row.commandClass.name }}</td>
+                    <td>{{ row.commandClass.version != undefined ? `v${row.commandClass.version}` : '-' }}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
 
             <p v-else class="empty-state cc-empty-tip">未读取到支持的 CC，可能设备尚未完成 interview。</p>
-          </div>
-
-          <div class="cc-endpoint-grid">
-            <section
-              v-for="endpoint in getActiveReadResult()?.endpoints ?? []"
-              :key="`${activeNodeId}-endpoint-${endpoint.index}`"
-              class="cc-endpoint-card"
-            >
-              <div class="cc-endpoint-header">
-                <div>
-                  <p class="section-kicker">Endpoint {{ endpoint.index }}</p>
-                  <h5 class="cc-endpoint-title">{{ endpoint.label || '未命名 Endpoint' }}</h5>
-                </div>
-                <span class="cc-count">共 {{ endpoint.commandClasses.length }} 个</span>
-              </div>
-
-              <div v-if="endpoint.commandClasses.length > 0" class="cc-chip-list">
-                <span
-                  v-for="commandClass in endpoint.commandClasses"
-                  :key="`${activeNodeId}-${endpoint.index}-${commandClass.id}-${commandClass.name}`"
-                  class="cc-chip"
-                >
-                  {{ formatCommandClassWithId(commandClass) }}
-                </span>
-              </div>
-
-              <p v-else class="empty-state cc-empty-tip">该 Endpoint 未读取到支持的 CC。</p>
-            </section>
           </div>
         </template>
       </div>
@@ -382,7 +387,8 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
 }
 
 .cc-dialog-title,
-.cc-endpoint-title {
+.cc-table th,
+.cc-table td {
   margin: 0;
 }
 
@@ -395,8 +401,7 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
   color: #5b42a8;
 }
 
-.cc-result-card,
-.cc-endpoint-card {
+.cc-result-card {
   display: grid;
   gap: 14px;
   padding: 16px 18px;
@@ -410,8 +415,7 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
   background: rgba(255, 246, 252, 0.92);
 }
 
-.cc-result-heading,
-.cc-endpoint-header {
+.cc-result-heading {
   display: flex;
   justify-content: space-between;
   gap: 16px;
@@ -443,27 +447,45 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
   font-weight: 700;
 }
 
-.cc-chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.cc-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
+.cc-table-wrap {
+  overflow: auto;
   border: 1px solid rgba(143, 117, 201, 0.14);
-  font-size: 0.88rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
 }
 
-.cc-endpoint-grid {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.cc-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.cc-table th,
+.cc-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(92, 57, 181, 0.1);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.cc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(245, 240, 255, 0.98);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.cc-table tbody tr:hover {
+  background: rgba(238, 229, 255, 0.48);
+}
+
+.cc-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .cc-empty-tip {
@@ -476,13 +498,8 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
   }
 
   .cc-dialog-header,
-  .cc-result-heading,
-  .cc-endpoint-header {
+  .cc-result-heading {
     flex-direction: column;
-  }
-
-  .cc-endpoint-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>
