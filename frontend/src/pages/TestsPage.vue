@@ -43,7 +43,7 @@ const TEST_DEFINITION_PRIORITY: Record<string, number> = {
   "user-code-edit": 1,
   "user-code-delete": 2,
 };
-const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback"]);
+const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "precheck.capabilities"]);
 
 const runnableNodes = computed(() => {
   return [...platform.nodes]
