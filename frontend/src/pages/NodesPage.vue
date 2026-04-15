@@ -13,7 +13,6 @@ interface SupportedEndpointResult {
 
 interface FlattenedCcRow {
   endpointIndex: number;
-  endpointLabel?: string;
   commandClass: CommandClassSnapshot;
 }
 
@@ -115,7 +114,6 @@ function flattenCommandClassRows(result?: SupportedCcReadResult): FlattenedCcRow
   return result.endpoints.flatMap((endpoint) =>
     endpoint.commandClasses.map((commandClass) => ({
       endpointIndex: endpoint.index,
-      endpointLabel: endpoint.label,
       commandClass,
     })),
   );
@@ -129,7 +127,7 @@ function buildCopyText(nodeId: number, result: SupportedCcReadResult): string {
     `Node: #${nodeId} ${node?.name || node?.product || ""}`.trim(),
     `Read At: ${formatReadTime(result.readAt)}`,
     "",
-    "Endpoint\tEndpoint Label\tCC ID\tCC Name\tVersion",
+    "Endpoint\tCC ID\tCC Name\tVersion",
   ];
 
   if (rows.length === 0) {
@@ -138,7 +136,6 @@ function buildCopyText(nodeId: number, result: SupportedCcReadResult): string {
     lines.push(
       ...rows.map((row) => [
         row.endpointIndex,
-        row.endpointLabel || "-",
         formatCommandClassId(row.commandClass.id),
         row.commandClass.name,
         row.commandClass.version != undefined ? `v${row.commandClass.version}` : "-",
@@ -315,7 +312,6 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
                 <thead>
                   <tr>
                     <th>Endpoint</th>
-                    <th>Endpoint 名称</th>
                     <th>CC ID</th>
                     <th>CC 名称</th>
                     <th>版本</th>
@@ -327,7 +323,6 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
                     :key="`${activeNodeId}-${row.endpointIndex}-${row.commandClass.id}-${row.commandClass.name}`"
                   >
                     <td>{{ row.endpointIndex }}</td>
-                    <td>{{ row.endpointLabel || '未命名 Endpoint' }}</td>
                     <td>{{ formatCommandClassId(row.commandClass.id) }}</td>
                     <td>{{ row.commandClass.name }}</td>
                     <td>{{ row.commandClass.version != undefined ? `v${row.commandClass.version}` : '-' }}</td>
