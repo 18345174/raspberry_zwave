@@ -43,6 +43,7 @@ const TEST_DEFINITION_PRIORITY: Record<string, number> = {
   "user-code-edit": 1,
   "user-code-delete": 2,
 };
+const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback"]);
 
 const runnableNodes = computed(() => {
   return [...platform.nodes]
@@ -173,7 +174,7 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
   if (!item.runId) {
     return [];
   }
-  const logs = platform.runLogs[item.runId] ?? [];
+  const logs = (platform.runLogs[item.runId] ?? []).filter((log) => !HIDDEN_LOG_STEP_KEYS.has(log.stepKey));
   const collapsedLogs: TestLogRecord[] = [];
   const progressLogIndexes = new Map<string, number>();
 
@@ -201,6 +202,14 @@ function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord
   if (log?.level === "error") {
     return "failed";
   }
+
+  if (log?.stepKey === "add.progress") {
+    const status = getExecutionItemStatus(item);
+    if (status === "running" || status === "queued") {
+      return "running";
+    }
+  }
+
   if (index === logs.length - 1) {
     const status = getExecutionItemStatus(item);
     if (status === "running" || status === "queued") {
