@@ -36,8 +36,8 @@ async function handleSave(): Promise<void> {
 </script>
 
 <template>
-  <div class="page-grid page-grid-single">
-    <section class="page-card accent-card">
+  <div class="page-grid controller-page-grid">
+    <section class="page-card accent-card controller-selection-card">
       <div class="section-heading">
         <div>
           <p class="section-kicker">串口发现</p>
@@ -80,14 +80,20 @@ async function handleSave(): Promise<void> {
           {{ draftPortPath && draftPortPath === platform.selectedPortPath ? '已选择当前串口' : '保存串口选择' }}
         </button>
       </div>
+    </section>
 
-      <div class="section-heading controller-status-heading">
+    <section class="page-card controller-status-card">
+      <div class="section-heading section-heading-tight">
         <div>
           <p class="section-kicker">驱动生命周期</p>
           <h3>运行状态</h3>
         </div>
         <StatusPill :label="translateDriverPhase(platform.status.phase)" :tone="platform.status.phase === 'ready' ? 'good' : platform.status.phase === 'error' ? 'bad' : 'warn'" />
       </div>
+
+      <p class="status-intro">
+        串口选择保存在左侧，右侧面板聚焦当前连接状态与常用操作，让宽屏下的信息利用更充分。
+      </p>
 
       <dl class="details-grid">
         <div>
@@ -118,6 +124,35 @@ async function handleSave(): Promise<void> {
 
       <p v-if="platform.status.lastError" class="error-text">{{ platform.status.lastError }}</p>
       <p v-else-if="platform.status.phase === 'connecting'" class="port-meta">驱动已启动，正在等待控制器完成就绪。</p>
+      <p v-else class="port-meta">若控制器未进入就绪状态，可先确认左侧串口选择，再尝试重连。</p>
     </section>
   </div>
 </template>
+
+<style scoped>
+.controller-page-grid {
+  grid-template-columns: minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+  align-items: start;
+}
+
+.controller-selection-card,
+.controller-status-card {
+  display: grid;
+  gap: 18px;
+}
+
+.section-heading-tight {
+  margin-bottom: 0;
+}
+
+.status-intro {
+  margin: 0;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .controller-page-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

@@ -455,7 +455,7 @@ async function cancelExecution(): Promise<void> {
         <p v-else class="empty-state">当前没有可执行自动测试的设备，请先确认设备已完成采访并支持对应命令类。</p>
       </div>
 
-      <div v-else-if="pageStage === 'definitions' && selectedNode" class="stage-panel stage-panel-narrow">
+      <div v-else-if="pageStage === 'definitions' && selectedNode" class="stage-panel stage-panel-definitions">
         <div class="selection-summary-card">
           <div>
             <p class="section-kicker">目标设备</p>
@@ -473,11 +473,12 @@ async function cancelExecution(): Promise<void> {
         <div class="definition-checklist">
           <label v-for="definition in selectedNodeDefinitions" :key="definition.id" class="definition-option">
             <input :checked="selectedDefinitionIds.includes(definition.id)" type="checkbox" @change="toggleDefinition(definition.id)" />
-            <div>
+            <div class="definition-option-body">
               <div class="definition-option-title-row">
                 <strong>{{ definition.name }}</strong>
                 <span class="definition-chip">{{ definition.deviceType }}</span>
               </div>
+              <p>{{ definition.description }}</p>
             </div>
           </label>
         </div>
@@ -584,10 +585,6 @@ async function cancelExecution(): Promise<void> {
   gap: 18px;
 }
 
-.stage-panel-narrow {
-  max-width: 980px;
-}
-
 .section-heading-tight {
   margin-bottom: 0;
 }
@@ -679,6 +676,11 @@ async function cancelExecution(): Promise<void> {
   gap: 14px;
 }
 
+.stage-panel-definitions .definition-checklist {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-items: stretch;
+}
+
 .definition-option {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
@@ -686,6 +688,20 @@ async function cancelExecution(): Promise<void> {
   align-items: start;
   padding: 18px;
   cursor: pointer;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.definition-option:hover {
+  transform: translateY(-2px);
+  border-color: rgba(142, 113, 232, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(244, 237, 255, 0.82));
+  box-shadow: 0 16px 30px rgba(132, 102, 196, 0.1);
+}
+
+.definition-option:has(input:checked) {
+  border-color: rgba(142, 113, 232, 0.46);
+  background: linear-gradient(180deg, rgba(245, 238, 255, 0.98), rgba(234, 223, 255, 0.92));
+  box-shadow: 0 18px 34px rgba(132, 102, 196, 0.14);
 }
 
 .definition-option input {
@@ -694,12 +710,30 @@ async function cancelExecution(): Promise<void> {
   height: 18px;
 }
 
+.definition-option-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
 .definition-option-title-row {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 12px;
-  align-items: center;
-  margin-bottom: 8px;
+  align-items: flex-start;
+}
+
+.definition-option-title-row strong {
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.definition-option p {
+  color: var(--muted);
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
 }
 
 .definition-chip {
@@ -711,6 +745,7 @@ async function cancelExecution(): Promise<void> {
   color: var(--accent-deep);
   font-size: 0.78rem;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .action-footer {
@@ -902,6 +937,10 @@ async function cancelExecution(): Promise<void> {
     grid-template-columns: 96px minmax(140px, 1fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr);
   }
 
+  .stage-panel-definitions .definition-checklist {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .device-table-row span:nth-child(5),
   .device-table-row span:nth-child(6),
   .device-table-head span:nth-child(5),
@@ -931,12 +970,22 @@ async function cancelExecution(): Promise<void> {
     grid-template-columns: 1fr;
   }
 
+  .stage-panel-definitions .definition-checklist {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .device-table-head {
     display: none;
   }
 
   .step-row {
     grid-template-columns: 28px 28px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .stage-panel-definitions .definition-checklist {
+    grid-template-columns: 1fr;
   }
 }
 </style>
