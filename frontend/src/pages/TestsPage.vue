@@ -38,6 +38,12 @@ const currentExecutionRunId = ref("");
 const executionToken = ref(0);
 let supportLoadToken = 0;
 
+const TEST_DEFINITION_PRIORITY: Record<string, number> = {
+  "user-code-add": 0,
+  "user-code-edit": 1,
+  "user-code-delete": 2,
+};
+
 const runnableNodes = computed(() => {
   return [...platform.nodes]
     .filter((node) => node.nodeId !== platform.status.controllerId && node.deviceType !== "Controller")
@@ -52,7 +58,7 @@ const selectedNodeDefinitions = computed(() => {
   if (!selectedNodeId.value) {
     return [];
   }
-  return supportedDefinitionMap.value[selectedNodeId.value] ?? [];
+  return sortDefinitions(supportedDefinitionMap.value[selectedNodeId.value] ?? []);
 });
 
 const selectedDefinitions = computed(() => {
@@ -121,8 +127,22 @@ function describeNode(node: NodeSummary): string {
   return node.product || node.name || node.manufacturer || `节点 ${node.nodeId}`;
 }
 
+function getDefinitionPriority(definition: TestDefinition): number {
+  return TEST_DEFINITION_PRIORITY[definition.key] ?? 100;
+}
+
+function sortDefinitions(definitions: TestDefinition[]): TestDefinition[] {
+  return [...definitions].sort((left, right) => {
+    const priorityDiff = getDefinitionPriority(left) - getDefinitionPriority(right);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+    return left.name.localeCompare(right.name, "zh-CN");
+  });
+}
+
 function formatDefinitionList(definitions: TestDefinition[]): string {
-  return definitions.map((definition) => definition.name).join(" / ");
+  return sortDefinitions(definitions).map((definition) => definition.name).join(" / ");
 }
 
 function formatLogPayload(log: TestLogRecord): string {
@@ -478,7 +498,6 @@ async function cancelExecution(): Promise<void> {
                 <strong>{{ definition.name }}</strong>
                 <span class="definition-chip">{{ definition.deviceType }}</span>
               </div>
-              <p>{{ definition.description }}</p>
             </div>
           </label>
         </div>
@@ -730,10 +749,6 @@ async function cancelExecution(): Promise<void> {
 
 .definition-option p {
   color: var(--muted);
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
 }
 
 .definition-chip {
