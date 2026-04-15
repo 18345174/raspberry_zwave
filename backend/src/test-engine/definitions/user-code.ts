@@ -50,6 +50,11 @@ function ensureAddIsSupported(capabilities: UserCodeCapabilities | undefined): v
   }
 }
 
+function isUnsupportedCommandError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("does not support the command");
+}
+
 async function runPlaceholderUserCodeTest(context: Parameters<ExecutableTestDefinition["run"]>[0], action: string) {
   await context.log("info", "placeholder.start", `${action} User Code 测试项当前为占位卡片，暂未实现实际设备操作。`);
   return {
@@ -76,12 +81,22 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
       : { supported: false, reason: "节点未发现 User Code CC。" };
   },
   async run(context) {
-    await context.log("info", "precheck.start", "开始读取 User Code 能力");
+    await context.log("info", "precheck.start", "开始读取 User Code 用户数量");
 
-    const [supportedUsersRaw, capabilities] = await Promise.all([
-      context.invokeCcApi({ commandClass: "User Code", method: "getUsersCount" }),
-      context.invokeCcApi({ commandClass: "User Code", method: "getCapabilities" }),
-    ]);
+    const supportedUsersRaw = await context.invokeCcApi({ commandClass: "User Code", method: "getUsersCount" });
+    let capabilities: unknown;
+
+    try {
+      capabilities = await context.invokeCcApi({ commandClass: "User Code", method: "getCapabilities" });
+    } catch (error) {
+      if (!isUnsupportedCommandError(error)) {
+        throw error;
+      }
+
+      await context.log("warn", "precheck.capabilities", "设备不支持 User Code CapabilitiesGet，跳过能力读取，继续执行批量添加", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     const supportedUsers = normalizeSupportedUsers(supportedUsersRaw);
     const normalizedCapabilities = (capabilities ?? undefined) as UserCodeCapabilities | undefined;
