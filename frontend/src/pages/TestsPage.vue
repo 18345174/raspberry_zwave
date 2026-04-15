@@ -647,7 +647,13 @@ async function cancelExecution(): Promise<void> {
         <p v-if="hasBlockingRun" class="warning-banner">当前已有测试任务正在执行，请等待当前任务结束后再开始。</p>
 
         <div class="definition-checklist">
-          <label v-for="definition in selectedNodeDefinitions" :key="definition.id" class="definition-option">
+          <label
+            v-for="definition in selectedNodeDefinitions"
+            :key="definition.id"
+            class="definition-option"
+            :class="{ 'definition-option-disabled': !isDefinitionSelectable(definition) }"
+            :data-disabled-tip="!isDefinitionSelectable(definition) ? '请先选择“添加 User Code”' : undefined"
+          >
             <input
               :checked="selectedDefinitionIds.includes(definition.id)"
               :disabled="!isDefinitionSelectable(definition)"
@@ -659,7 +665,6 @@ async function cancelExecution(): Promise<void> {
                 <strong>{{ definition.name }}</strong>
                 <span class="definition-chip">{{ definition.deviceType }}</span>
               </div>
-              <p v-if="!isDefinitionSelectable(definition)" class="definition-option-note">请先选择“添加 User Code”</p>
             </div>
           </label>
         </div>
@@ -872,6 +877,7 @@ async function cancelExecution(): Promise<void> {
 }
 
 .definition-option {
+  position: relative;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   gap: 14px;
@@ -900,16 +906,34 @@ async function cancelExecution(): Promise<void> {
   height: 18px;
 }
 
+.definition-option-disabled::after {
+  content: attr(data-disabled-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  transform: translate(-50%, 6px);
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(33, 24, 54, 0.94);
+  color: #fff;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 14px 24px rgba(33, 24, 54, 0.18);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.definition-option-disabled:hover::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .definition-option-body {
   display: grid;
   gap: 10px;
   min-width: 0;
-}
-
-.definition-option-note {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.82rem;
 }
 
 .definition-option-title-row {
