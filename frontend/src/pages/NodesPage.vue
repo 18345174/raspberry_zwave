@@ -172,7 +172,7 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
   };
 
   try {
-    const detail = await apiClient.refreshNode(nodeId);
+    const detail = await apiClient.readSupportedCommandClasses(nodeId);
     readResults.value = {
       ...readResults.value,
       [nodeId]: {
@@ -181,10 +181,6 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
         readAt: new Date().toISOString(),
       },
     };
-
-    await platform.refreshNodes().catch(() => {
-      // Keep the freshly read result visible even if the summary refresh fails.
-    });
   } catch (error) {
     readErrors.value = {
       ...readErrors.value,
@@ -279,7 +275,7 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
 
         <div v-if="loadingNodeId === activeNodeId" class="cc-result-card">
           <p class="cc-result-title">正在读取设备支持的 CC...</p>
-          <p class="cc-read-meta">请稍候，系统正在刷新该节点的 interview 信息。</p>
+          <p class="cc-read-meta">请稍候，系统正在读取当前节点缓存，若 interview 尚未完成会等待完成后返回。</p>
         </div>
 
         <div v-else-if="getReadError(activeNodeId)" class="cc-result-card cc-result-error">

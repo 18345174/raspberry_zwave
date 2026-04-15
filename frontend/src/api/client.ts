@@ -161,6 +161,9 @@ export const apiClient = {
   refreshNode(nodeId: number) {
     return request<NodeDetail>(`/api/nodes/${nodeId}/refresh`, { method: "POST" });
   },
+  readSupportedCommandClasses(nodeId: number) {
+    return request<NodeDetail>(`/api/nodes/${nodeId}/read-supported-cc`, { method: "POST" });
+  },
   pingNode(nodeId: number) {
     return request<{ ok: boolean }>(`/api/nodes/${nodeId}/ping`, { method: "POST" });
   },

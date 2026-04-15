@@ -47,6 +47,12 @@ export class NodeRegistryService {
     return node;
   }
 
+  public async readSupportedCommandClasses(nodeId: number): Promise<NodeDetail> {
+    const node = await this.zwaveAdapter.readSupportedCommandClasses(nodeId);
+    this.storage.upsertNodeSnapshot(node);
+    return node;
+  }
+
   public async handleEvent(event: ZwaveEvent): Promise<void> {
     if (event.type === "zwave.node.added" || event.type === "zwave.node.updated") {
       const payload = event.payload as { node?: NodeDetail } | NodeDetail;

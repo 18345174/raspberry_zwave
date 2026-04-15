@@ -58,6 +58,8 @@ type MutableFirmwareUpdateSession = FirmwareUpdateStatus & {
   abortRequested?: boolean;
 };
 
+const SUPPORTED_CC_READ_TIMEOUT_MS = 30_000;
+
 export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private readonly serialDiscovery = new SerialDiscoveryService();
   private readonly emitter = new EventEmitter();
@@ -364,6 +366,20 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error(`Node ${nodeId} not found.`);
     }
     await node.refreshInfo();
+    return this.toNodeDetail(node);
+  }
+
+  public async readSupportedCommandClasses(nodeId: number): Promise<NodeDetail> {
+    this.ensureDriverReady();
+    const node = this.driver.controller.nodes.get(nodeId);
+    if (!node) {
+      throw new Error(`Node ${nodeId} not found.`);
+    }
+
+    if (!this.isNodeInterviewComplete(node)) {
+      await this.waitForNodeInterviewCompletion(node, SUPPORTED_CC_READ_TIMEOUT_MS);
+    }
+
     return this.toNodeDetail(node);
   }
 
@@ -1158,6 +1174,44 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
 
     return undefined;
+  }
+
+  private isNodeInterviewComplete(node: any): boolean {
+    return Boolean(node?.ready) || String(node?.interviewStage ?? "").toLowerCase() === "complete";
+  }
+
+  private waitForNodeInterviewCompletion(node: any, timeoutMs: number): Promise<void> {
+    if (this.isNodeInterviewComplete(node)) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        node.off?.("interview completed", handleCompleted);
+        node.off?.("ready", handleCompleted);
+        node.off?.("interview failed", handleFailed);
+        clearTimeout(timeout);
+      };
+
+      const handleCompleted = () => {
+        cleanup();
+        resolve();
+      };
+
+      const handleFailed = (_failedNode: unknown, error: unknown) => {
+        cleanup();
+        reject(new Error(`Node interview failed: ${error instanceof Error ? error.message : String(error)}`));
+      };
+
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error("Node interview is still in progress. Please wait for interview completion and try again."));
+      }, timeoutMs);
+
+      node.once?.("interview completed", handleCompleted);
+      node.once?.("ready", handleCompleted);
+      node.once?.("interview failed", handleFailed);
+    });
   }
 
   private getEndpoints(node: any): EndpointSnapshot[] {
