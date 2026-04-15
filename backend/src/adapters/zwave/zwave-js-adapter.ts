@@ -997,10 +997,19 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     driver.on("node value removed", forwardValueEvent("zwave.value.updated", "[value] Value removed"));
     driver.on("node metadata updated", forwardValueEvent("zwave.value.updated", "[value] Metadata updated"));
     driver.on("node notification", (node: any, ccId: number, args: unknown) => {
+      const summarizedArgs = this.summarizeUnknown(args);
       this.log("info", "[notify] Notification received", {
         nodeId: node.id,
         commandClass: this.getCommandClassName(ccId),
-        args: this.summarizeUnknown(args),
+        args: summarizedArgs,
+      });
+      this.publish({
+        type: "zwave.node.notification",
+        payload: {
+          nodeId: node.id,
+          commandClass: this.getCommandClassName(ccId),
+          args: summarizedArgs,
+        },
       });
       this.publish({
         type: "zwave.driver.log",

@@ -245,6 +245,49 @@ export class TestEngineService {
             }, 200);
           });
         },
+        waitForEvent: async (match) => {
+          return await new Promise<Record<string, unknown>>((resolve, reject) => {
+            let settled = false;
+
+            const cleanup = (): void => {
+              unsubscribe();
+              clearTimeout(timeoutId);
+              clearInterval(cancelCheckId);
+            };
+
+            const settle = (handler: () => void): void => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              cleanup();
+              handler();
+            };
+
+            const unsubscribe = this.eventBus.subscribe((event) => {
+              if (event.type !== match.type || !event.payload || typeof event.payload !== "object") {
+                return;
+              }
+
+              const payload = event.payload as Record<string, unknown>;
+              if (match.predicate && !match.predicate(payload)) {
+                return;
+              }
+
+              settle(() => resolve(payload));
+            });
+
+            const timeoutId = setTimeout(() => {
+              settle(() => reject(new Error(`Timeout while waiting for event ${match.type}.`)));
+            }, match.timeoutMs);
+
+            const cancelCheckId = setInterval(() => {
+              if (this.cancellationFlags.has(runId)) {
+                settle(() => reject(new Error(`Test run cancelled while waiting for event ${match.type}.`)));
+              }
+            }, 200);
+          });
+        },
         wait: async (ms) => {
           await new Promise((resolve) => setTimeout(resolve, ms));
         },

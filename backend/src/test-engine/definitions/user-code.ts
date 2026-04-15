@@ -16,6 +16,9 @@ interface UserCodeReport {
 const USER_CODE_REPORT_TIMEOUT_MS = 1500;
 const USER_CODE_FALLBACK_QUERY_DELAY_MS = 800;
 const USER_CODE_BETWEEN_OPERATIONS_DELAY_MS = 1000;
+const USER_CODE_MANUAL_UNLOCK_TIMEOUT_MS = 2 * 60 * 1000;
+const USER_CODE_MANUAL_UNLOCK_MIN_COUNT = 3;
+const USER_CODE_MANUAL_UNLOCK_MAX_COUNT = 5;
 
 function normalizeSupportedUsers(value: unknown): number {
   const count = Number(value);
@@ -57,6 +60,28 @@ function ensureAddIsSupported(capabilities: UserCodeCapabilities | undefined): v
 function isUnsupportedCommandError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("does not support the command");
+}
+
+function randomIntInclusive(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function pickRandomUserIds(maxUserId: number): number[] {
+  if (maxUserId <= 0) {
+    return [];
+  }
+
+  const upperBound = Math.min(USER_CODE_MANUAL_UNLOCK_MAX_COUNT, maxUserId);
+  const lowerBound = Math.min(USER_CODE_MANUAL_UNLOCK_MIN_COUNT, upperBound);
+  const targetCount = randomIntInclusive(lowerBound, upperBound);
+  const pool = Array.from({ length: maxUserId }, (_, index) => index + 1);
+
+  for (let index = pool.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [pool[index], pool[swapIndex]] = [pool[swapIndex], pool[index]];
+  }
+
+  return pool.slice(0, targetCount);
 }
 
 async function runPlaceholderUserCodeTest(context: Parameters<ExecutableTestDefinition["run"]>[0], action: string) {
@@ -113,6 +138,27 @@ async function waitForUserCodeConfirmation(
   }
 }
 
+async function waitForManualKeypadUnlock(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  userId: number,
+): Promise<Record<string, unknown>> {
+  return await context.waitForEvent({
+    type: "zwave.node.notification",
+    timeoutMs: USER_CODE_MANUAL_UNLOCK_TIMEOUT_MS,
+    predicate: (payload) => {
+      if (String(payload.commandClass ?? "") !== "Notification") {
+        return false;
+      }
+
+      const args = (payload.args ?? {}) as Record<string, unknown>;
+      const parameters = (args.parameters ?? {}) as Record<string, unknown>;
+      return Number(args.type) === 6
+        && Number(args.event) === 6
+        && Number(parameters.userId) === userId;
+    },
+  });
+}
+
 export const userCodeAddDefinition: ExecutableTestDefinition = {
   traceCommandClasses: ["User Code"],
   meta: {
@@ -120,7 +166,7 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
     key: "user-code-add",
     name: "添加 User Code",
     deviceType: "door-lock",
-    version: 2,
+    version: 3,
     enabled: true,
     description: "读取设备支持的最大用户数后，从 User ID 1 开始依次批量添加 User Code。",
     inputSchema: {},
@@ -206,12 +252,46 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
       lastCode: addedUsers[addedUsers.length - 1]?.code,
     });
 
+    const manualUnlockUserIds = pickRandomUserIds(supportedUsers);
+
+    await context.log("info", "manual.start", `开始执行 ${manualUnlockUserIds.length} 组随机 User Code 手动解锁验证`, {
+      userIds: manualUnlockUserIds,
+      timeoutMsPerUser: USER_CODE_MANUAL_UNLOCK_TIMEOUT_MS,
+    });
+
+    for (let index = 0; index < manualUnlockUserIds.length; index += 1) {
+      const userId = manualUnlockUserIds[index];
+      await context.log("info", "manual.wait", `请使用 User ID：${userId} 的 User Code 在设备上手动解锁`, {
+        userId,
+        sequence: index + 1,
+        totalCount: manualUnlockUserIds.length,
+      });
+
+      const notification = await waitForManualKeypadUnlock(context, userId);
+
+      await context.log("info", "manual.confirmed", `已收到 User ID：${userId} 的手动解锁上报`, {
+        userId,
+        sequence: index + 1,
+        totalCount: manualUnlockUserIds.length,
+        notification,
+      });
+
+      if (index < manualUnlockUserIds.length - 1) {
+        await context.wait(300);
+      }
+    }
+
+    await context.log("info", "manual.done", "随机 User Code 手动解锁验证完成", {
+      userIds: manualUnlockUserIds,
+    });
+
     return {
       supportedUsers,
       generatedCodeRule: "User ID 零填充到至少 4 位，例如 0001、0002、0250。",
       firstUser: addedUsers[0],
       lastUser: addedUsers[addedUsers.length - 1],
       totalAdded: addedUsers.length,
+      manualUnlockUserIds,
     };
   },
 };

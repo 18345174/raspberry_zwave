@@ -30,6 +30,11 @@ export interface TestExecutionContext {
     timeoutMs: number;
     predicate?: (payload: Record<string, unknown>) => boolean;
   }): Promise<Record<string, unknown>>;
+  waitForEvent(match: {
+    type: string;
+    timeoutMs: number;
+    predicate?: (payload: Record<string, unknown>) => boolean;
+  }): Promise<Record<string, unknown>>;
   wait(ms: number): Promise<void>;
   isCancelled(): boolean;
 }

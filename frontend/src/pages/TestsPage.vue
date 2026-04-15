@@ -22,6 +22,13 @@ interface DeviceSupportRecord {
   definitions: TestDefinition[];
 }
 
+interface ManualUnlockPrompt {
+  definitionName: string;
+  userId: number;
+  sequence: number;
+  totalCount: number;
+}
+
 const TERMINAL_STATUSES = new Set<TestRunRecord["status"]>(["passed", "failed", "cancelled"]);
 
 const platform = usePlatformStore();
@@ -114,6 +121,53 @@ const overallExecutionStatus = computed<ExecutionStatus>(() => {
     return "passed";
   }
   return "pending";
+});
+
+const activeManualUnlockPrompt = computed<ManualUnlockPrompt | null>(() => {
+  const activeItem = executionItems.value.find((item) => {
+    const status = getExecutionItemStatus(item);
+    return status === "running" || status === "queued";
+  });
+
+  if (!activeItem?.runId) {
+    return null;
+  }
+
+  const logs = platform.runLogs[activeItem.runId] ?? [];
+  let latestPrompt: TestLogRecord | null = null;
+  let latestDoneTimestamp = 0;
+
+  for (const log of logs) {
+    if (log.stepKey === "manual.wait") {
+      latestPrompt = log;
+    } else if (log.stepKey === "manual.done") {
+      latestDoneTimestamp = Date.parse(log.timestamp);
+    }
+  }
+
+  if (!latestPrompt) {
+    return null;
+  }
+
+  if (latestDoneTimestamp >= Date.parse(latestPrompt.timestamp)) {
+    return null;
+  }
+
+  const payload = latestPrompt.payloadJson ?? {};
+  const userId = Number(payload.userId);
+  const sequence = Number(payload.sequence);
+  const totalCount = Number(payload.totalCount);
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+
+  return {
+    definitionName: activeItem.definition.name,
+    userId,
+    sequence: Number.isInteger(sequence) && sequence > 0 ? sequence : 1,
+    totalCount: Number.isInteger(totalCount) && totalCount > 0 ? totalCount : 1,
+  };
 });
 
 function getErrorMessage(error: unknown): string {
@@ -540,6 +594,15 @@ async function cancelExecution(): Promise<void> {
       </div>
 
       <div v-else-if="pageStage === 'execution' && selectedNode" class="stage-panel execution-panel">
+        <div v-if="activeManualUnlockPrompt" class="manual-unlock-overlay">
+          <div class="manual-unlock-modal">
+            <p class="section-kicker">人工验证</p>
+            <h4>{{ activeManualUnlockPrompt.definitionName }}</h4>
+            <p class="manual-unlock-message">请使用 User ID：{{ activeManualUnlockPrompt.userId }} 的 User Code 在设备上手动解锁</p>
+            <p class="manual-unlock-meta">第 {{ activeManualUnlockPrompt.sequence }} / {{ activeManualUnlockPrompt.totalCount }} 组，检测到解锁上报后会自动进入下一组。</p>
+          </div>
+        </div>
+
         <div class="execution-header-card">
           <div>
             <p class="section-kicker">总测试标题</p>
@@ -801,6 +864,44 @@ async function cancelExecution(): Promise<void> {
 
 .execution-panel {
   gap: 16px;
+}
+
+.manual-unlock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(44, 32, 71, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.manual-unlock-modal {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 28px;
+  border: 1px solid rgba(142, 113, 232, 0.28);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(255, 252, 255, 0.98), rgba(242, 234, 255, 0.94));
+  box-shadow: 0 24px 56px rgba(97, 73, 153, 0.24);
+}
+
+.manual-unlock-modal h4,
+.manual-unlock-message,
+.manual-unlock-meta {
+  margin: 0;
+}
+
+.manual-unlock-message {
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.manual-unlock-meta {
+  color: var(--muted);
 }
 
 .execution-header-side {
