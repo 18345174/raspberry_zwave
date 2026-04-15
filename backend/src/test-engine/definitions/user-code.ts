@@ -138,12 +138,15 @@ export const userCodeAddDefinition: ExecutableTestDefinition = {
 
       addedUsers.push({ userId, code });
 
-      if (userId === 1 || userId === supportedUsers || userId % 25 === 0) {
-        await context.log("info", "add.progress", `已完成 ${userId}/${supportedUsers} 个 User Code 添加`, {
-          currentUserId: userId,
-          code,
-          supportedUsers,
-        });
+      await context.log("info", "add.progress", `已完成 ${userId}/${supportedUsers} 个 User Code 添加`, {
+        currentUserId: userId,
+        code,
+        supportedUsers,
+      });
+
+      if (userId < supportedUsers) {
+        // Avoid overwhelming the lock with back-to-back encrypted writes.
+        await context.wait(500);
       }
     }
 

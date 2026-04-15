@@ -173,7 +173,27 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
   if (!item.runId) {
     return [];
   }
-  return platform.runLogs[item.runId] ?? [];
+  const logs = platform.runLogs[item.runId] ?? [];
+  const collapsedLogs: TestLogRecord[] = [];
+  const progressLogIndexes = new Map<string, number>();
+
+  for (const log of logs) {
+    if (!log.stepKey.endsWith(".progress")) {
+      collapsedLogs.push(log);
+      continue;
+    }
+
+    const existingIndex = progressLogIndexes.get(log.stepKey);
+    if (existingIndex == undefined) {
+      progressLogIndexes.set(log.stepKey, collapsedLogs.length);
+      collapsedLogs.push(log);
+      continue;
+    }
+
+    collapsedLogs[existingIndex] = log;
+  }
+
+  return collapsedLogs;
 }
 
 function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord[]): StepState {
