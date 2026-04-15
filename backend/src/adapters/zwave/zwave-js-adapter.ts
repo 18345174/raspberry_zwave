@@ -10,6 +10,7 @@ import {
 
 import type { AppConfig } from "../../domain/config.js";
 import type {
+  CommandClassSnapshot,
   ContactConfigRow,
   DriverStatus,
   EndpointSnapshot,
@@ -1116,6 +1117,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const endpoints = this.getEndpoints(node);
     const values = this.getValues(node);
     const commandClasses = Array.from(new Set(endpoints.flatMap((endpoint) => endpoint.commandClasses)));
+    const commandClassDetails = this.mergeCommandClassDetails(endpoints.flatMap((endpoint) => endpoint.commandClassDetails ?? []));
     const securityClasses = this.getNodeSecurityClasses(node);
 
     return {
@@ -1134,6 +1136,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       isListening: Boolean(node.isListening),
       lastSeenAt: node.lastSeen ? new Date(node.lastSeen).toISOString() : undefined,
       commandClasses,
+      commandClassDetails,
       endpoints,
       values,
     };
@@ -1162,13 +1165,58 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return Array.from(new Set([0, ...indices]))
       .map((index) => node.getEndpoint(index) ?? (index === 0 ? node : undefined))
       .filter(Boolean)
-      .map((endpoint: any) => ({
-        index: endpoint.index ?? 0,
-        label: endpoint.endpointLabel,
-        commandClasses: Array.from(endpoint.implementedCommandClasses?.keys?.() ?? []).map((ccId) =>
-          this.getCommandClassName(Number(ccId)),
-        ),
-      }));
+      .map((endpoint: any) => {
+        const commandClassDetails = this.getCommandClassDetails(endpoint);
+        return {
+          index: endpoint.index ?? 0,
+          label: endpoint.endpointLabel,
+          commandClasses: commandClassDetails.map((item) => item.name),
+          commandClassDetails,
+        };
+      });
+  }
+
+  private getCommandClassDetails(endpoint: any): CommandClassSnapshot[] {
+    const entries = Array.from(endpoint.implementedCommandClasses?.entries?.() ?? []) as Array<
+      [unknown, { version?: unknown } | undefined]
+    >;
+
+    return entries
+      .map(([ccId, info]) => {
+        const normalizedCcId = Number(ccId);
+        const endpointVersion = typeof endpoint.getCCVersion === "function"
+          ? Number(endpoint.getCCVersion(normalizedCcId))
+          : undefined;
+        const infoVersion = info?.version != undefined ? Number(info.version) : undefined;
+        const version = [endpointVersion, infoVersion].find((value) => value != undefined && Number.isFinite(value) && value > 0);
+
+        return {
+          id: normalizedCcId,
+          name: this.getCommandClassName(normalizedCcId),
+          version,
+        } satisfies CommandClassSnapshot;
+      })
+      .filter((item) => Number.isFinite(item.id))
+      .sort((left, right) => left.name.localeCompare(right.name, "en"));
+  }
+
+  private mergeCommandClassDetails(items: CommandClassSnapshot[]): CommandClassSnapshot[] {
+    const merged = new Map<number, CommandClassSnapshot>();
+
+    for (const item of items) {
+      const existing = merged.get(item.id);
+      if (!existing) {
+        merged.set(item.id, item);
+        continue;
+      }
+
+      merged.set(item.id, {
+        ...existing,
+        version: Math.max(existing.version ?? 0, item.version ?? 0) || undefined,
+      });
+    }
+
+    return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name, "en"));
   }
 
   private getValues(node: any): NodeValueSnapshot[] {

@@ -86,10 +86,17 @@ export interface NodeValueSnapshot {
   valueId: ValueIdInput;
 }
 
+export interface CommandClassSnapshot {
+  id: number;
+  name: string;
+  version?: number;
+}
+
 export interface EndpointSnapshot {
   index: number;
   label?: string;
   commandClasses: string[];
+  commandClassDetails?: CommandClassSnapshot[];
 }
 
 export interface NodeSummary {
@@ -108,6 +115,7 @@ export interface NodeSummary {
   isListening: boolean;
   lastSeenAt?: string;
   commandClasses: string[];
+  commandClassDetails?: CommandClassSnapshot[];
 }
 
 export interface NodeDetail extends NodeSummary {
