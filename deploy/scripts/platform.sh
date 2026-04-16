@@ -176,7 +176,8 @@ run_install() {
     ./ "$APP_DIR"/
 
   cd "$APP_DIR"
-  npm install
+  npm install --include=optional
+  bash deploy/scripts/ensure-rollup-native.sh
   npm run build
 
   sudo chown -R "$APP_USER:$APP_GROUP" "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
