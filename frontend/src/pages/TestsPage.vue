@@ -778,6 +778,25 @@ async function downloadSavedReport(reportId: string, format: "html" | "xlsx"): P
   }
 }
 
+async function deleteSavedReport(report: TestReportSummary): Promise<void> {
+  if (!window.confirm(`确认删除报告“${report.title}”吗？`)) {
+    return;
+  }
+
+  reportActionBusy.value = true;
+  reportStatusMessage.value = "";
+
+  try {
+    await apiClient.deleteReport(report.id);
+    reportHistory.value = reportHistory.value.filter((item) => item.id !== report.id);
+    reportStatusMessage.value = `已删除历史测试报告：${report.title}`;
+  } catch (error) {
+    reportStatusMessage.value = getErrorMessage(error);
+  } finally {
+    reportActionBusy.value = false;
+  }
+}
+
 function toggleDefinition(definitionId: string): void {
   const definition = selectedNodeDefinitions.value.find((item) => item.id === definitionId);
   if (!definition) {
@@ -1202,19 +1221,29 @@ async function cancelExecution(): Promise<void> {
           <p v-if="reportHistoryLoading" class="empty-state">正在加载测试报告历史...</p>
           <div v-else-if="reportHistory.length" class="report-history-list">
             <article v-for="report in reportHistory" :key="report.id" class="report-history-item">
-              <div>
-                <strong>{{ report.title }}</strong>
+              <div class="report-history-main">
+                <div class="report-history-header">
+                  <div>
+                    <strong>{{ report.title }}</strong>
+                    <p class="report-history-meta">
+                      报告 ID：{{ report.id }} · 生成时间：{{ formatTimestamp(report.createdAt) }}
+                    </p>
+                  </div>
+                  <div class="button-row report-history-actions">
+                    <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'html')">
+                      下载 HTML
+                    </button>
+                    <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'xlsx')">
+                      下载 XLSX
+                    </button>
+                    <button class="ghost-button compact-button danger-button" :disabled="reportActionBusy" @click="deleteSavedReport(report)">
+                      删除
+                    </button>
+                  </div>
+                </div>
                 <p class="report-history-meta">
-                  报告 ID：{{ report.id }} · 生成时间：{{ formatTimestamp(report.createdAt) }} · 状态：{{ report.status }}
+                  状态：{{ report.status }}
                 </p>
-              </div>
-              <div class="button-row">
-                <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'html')">
-                  下载 HTML
-                </button>
-                <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'xlsx')">
-                  下载 XLSX
-                </button>
               </div>
             </article>
           </div>
@@ -1462,17 +1491,47 @@ async function cancelExecution(): Promise<void> {
 }
 
 .report-history-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
+  display: grid;
+  gap: 12px;
   padding: 16px 18px;
   border: 1px solid rgba(92, 57, 181, 0.14);
   background: rgba(250, 247, 255, 0.88);
 }
 
+.report-history-main {
+  display: grid;
+  gap: 8px;
+}
+
+.report-history-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
 .report-history-meta {
   color: var(--muted);
+}
+
+.report-history-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.danger-button {
+  color: var(--bad);
+  border-color: rgba(165, 58, 44, 0.24);
+}
+
+@media (max-width: 760px) {
+  .report-history-header {
+    flex-direction: column;
+  }
+
+  .report-history-actions {
+    justify-content: flex-start;
+  }
 }
 
 .manual-unlock-overlay {

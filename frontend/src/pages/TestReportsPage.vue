@@ -84,6 +84,28 @@ async function downloadReport(report: TestReportSummary, format: "html" | "xlsx"
   }
 }
 
+async function deleteReport(report: TestReportSummary): Promise<void> {
+  if (!window.confirm(`确认删除报告“${report.title}”吗？`)) {
+    return;
+  }
+
+  actionBusy.value = true;
+  statusMessage.value = "";
+
+  try {
+    await apiClient.deleteReport(report.id);
+    reports.value = reports.value.filter((item) => item.id !== report.id);
+    statusMessage.value = `已删除报告：${report.title}`;
+    if (!reports.value.length) {
+      statusMessage.value = "当前筛选条件下还没有测试报告";
+    }
+  } catch (error) {
+    statusMessage.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
 watch(selectedNodeFilter, async () => {
   await loadReports();
 }, { immediate: true });
@@ -122,30 +144,39 @@ watch(selectedNodeFilter, async () => {
       <div v-else-if="reports.length" class="report-list">
         <article v-for="report in reports" :key="report.id" class="report-item">
           <div class="report-item-main">
-            <div>
-              <strong>{{ report.title }}</strong>
-              <p class="report-item-meta">
-                节点：#{{ report.nodeId }} {{ describeNodeById(report.nodeId) }}
-              </p>
-              <p class="report-item-meta">
-                报告 ID：{{ report.id }} · 生成时间：{{ formatTimestamp(report.createdAt) }}
-              </p>
+            <div class="report-item-header">
+              <div>
+                <strong>{{ report.title }}</strong>
+                <p class="report-item-meta">
+                  节点：#{{ report.nodeId }} {{ describeNodeById(report.nodeId) }}
+                </p>
+              </div>
+              <div class="button-row report-item-actions">
+                <button class="ghost-button compact-button" :disabled="actionBusy" @click="downloadReport(report, 'html')">
+                  下载 HTML
+                </button>
+                <button class="ghost-button compact-button" :disabled="actionBusy" @click="downloadReport(report, 'xlsx')">
+                  下载 XLSX
+                </button>
+                <button class="ghost-button compact-button danger-button" :disabled="actionBusy" @click="deleteReport(report)">
+                  删除
+                </button>
+              </div>
             </div>
-            <div class="report-item-side">
-              <span class="status-pill" :data-tone="report.status.includes('通过') ? 'good' : report.status.includes('失败') || report.status.includes('取消') ? 'bad' : undefined">
-                {{ report.status }}
-              </span>
-              <span class="report-item-meta">来源任务：{{ report.sourceRunIds.length }} 个</span>
-            </div>
-          </div>
 
-          <div class="button-row">
-            <button class="ghost-button compact-button" :disabled="actionBusy" @click="downloadReport(report, 'html')">
-              下载 HTML
-            </button>
-            <button class="ghost-button compact-button" :disabled="actionBusy" @click="downloadReport(report, 'xlsx')">
-              下载 XLSX
-            </button>
+            <div class="report-item-footer">
+              <div>
+                <p class="report-item-meta">
+                  报告 ID：{{ report.id }} · 生成时间：{{ formatTimestamp(report.createdAt) }}
+                </p>
+              </div>
+              <div class="report-item-side">
+                <span class="status-pill" :data-tone="report.status.includes('通过') ? 'good' : report.status.includes('失败') || report.status.includes('取消') ? 'bad' : undefined">
+                  {{ report.status }}
+                </span>
+                <span class="report-item-meta">来源任务：{{ report.sourceRunIds.length }} 个</span>
+              </div>
+            </div>
           </div>
         </article>
       </div>
@@ -180,13 +211,19 @@ watch(selectedNodeFilter, async () => {
 
 .report-item {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   padding: 18px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
 }
 
 .report-item-main {
+  display: grid;
+  gap: 12px;
+}
+
+.report-item-header,
+.report-item-footer {
   display: flex;
   justify-content: space-between;
   gap: 16px;
@@ -198,9 +235,32 @@ watch(selectedNodeFilter, async () => {
   color: var(--muted);
 }
 
+.report-item-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .report-item-side {
   display: grid;
   gap: 8px;
   justify-items: end;
+}
+
+.danger-button {
+  color: var(--bad);
+  border-color: rgba(165, 58, 44, 0.24);
+}
+
+@media (max-width: 760px) {
+  .report-item-header,
+  .report-item-footer {
+    flex-direction: column;
+  }
+
+  .report-item-actions,
+  .report-item-side {
+    justify-content: flex-start;
+    justify-items: start;
+  }
 }
 </style>

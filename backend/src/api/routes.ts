@@ -291,6 +291,14 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return report;
   });
 
+  app.delete("/api/tests/reports/:reportId", async (request: FastifyRequest<{ Params: { reportId: string } }>, reply) => {
+    const deleted = services.testEngine.deleteReport(request.params.reportId);
+    if (!deleted) {
+      return reply.code(404).send({ message: "Test report not found." });
+    }
+    return { ok: true };
+  });
+
   app.get("/api/tests/runs", async () => {
     return { items: services.testEngine.listRuns() };
   });

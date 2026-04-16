@@ -211,6 +211,9 @@ export const apiClient = {
   getReport(reportId: string) {
     return request<TestReportRecord>(`/api/tests/reports/${reportId}`);
   },
+  deleteReport(reportId: string) {
+    return request<{ ok: boolean }>(`/api/tests/reports/${reportId}`, { method: "DELETE" });
+  },
   cancelRun(runId: string) {
     return request<{ ok: boolean }>(`/api/tests/runs/${runId}/cancel`, { method: "POST" });
   },

@@ -95,6 +95,10 @@ export class TestEngineService {
     return this.storage.getTestReport(reportId);
   }
 
+  public deleteReport(reportId: string): boolean {
+    return this.storage.deleteTestReport(reportId);
+  }
+
   public getActiveRunId(): string | undefined {
     return this.activeRunId;
   }

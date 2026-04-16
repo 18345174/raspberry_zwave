@@ -522,6 +522,14 @@ export class DatabaseService {
       : undefined;
   }
 
+  public deleteTestReport(id: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM test_reports WHERE id = ?")
+      .run(id);
+
+    return result.changes > 0;
+  }
+
   public createAuthSession(record: AuthSessionRecord): void {
     this.db
       .prepare(
