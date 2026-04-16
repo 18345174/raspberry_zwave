@@ -1,4 +1,9 @@
-import * as XLSX from "xlsx";
+let xlsxModulePromise: Promise<typeof import("xlsx")> | null = null;
+
+async function loadXlsx() {
+  xlsxModulePromise ??= import("xlsx");
+  return xlsxModulePromise;
+}
 
 export function downloadTextFile(content: string, filename: string, mimeType: string): void {
   const blob = new Blob([content], { type: mimeType });
@@ -10,7 +15,12 @@ export function downloadTextFile(content: string, filename: string, mimeType: st
   window.URL.revokeObjectURL(url);
 }
 
-export function downloadXlsxFromCsv(csvContent: string, filename: string, sheetName = "Test Report"): void {
+export async function downloadXlsxFromCsv(
+  csvContent: string,
+  filename: string,
+  sheetName = "Test Report",
+): Promise<void> {
+  const XLSX = await loadXlsx();
   const workbook = XLSX.read(csvContent, { type: "string" });
   const firstSheetName = workbook.SheetNames[0];
 

@@ -748,7 +748,7 @@ async function generateAndSaveExecutionReport(): Promise<void> {
 
     const baseName = buildExecutionReportBaseName(createdReport.id);
     downloadTextFile(htmlContent, `${baseName}.html`, "text/html;charset=utf-8");
-    downloadXlsxFromCsv(csvContent, `${baseName}.xlsx`, "Test Report");
+    await downloadXlsxFromCsv(csvContent, `${baseName}.xlsx`, "Test Report");
 
     reportStatusMessage.value = `测试报告已生成，并已保存到历史记录（报告 ID：${createdReport.id}）。`;
     await loadReportHistory();
@@ -768,7 +768,7 @@ async function downloadSavedReport(reportId: string, format: "html" | "xlsx"): P
     if (format === "html") {
       downloadTextFile(report.htmlContent, `${buildExecutionReportBaseName(report.id)}.html`, "text/html;charset=utf-8");
     } else {
-      downloadXlsxFromCsv(report.csvContent, `${buildExecutionReportBaseName(report.id)}.xlsx`, "Test Report");
+      await downloadXlsxFromCsv(report.csvContent, `${buildExecutionReportBaseName(report.id)}.xlsx`, "Test Report");
     }
     reportStatusMessage.value = `已下载历史测试报告：${report.title}（${format === "html" ? "HTML" : "XLSX"}）`;
   } catch (error) {

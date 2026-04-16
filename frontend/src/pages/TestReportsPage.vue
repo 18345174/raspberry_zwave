@@ -73,7 +73,7 @@ async function downloadReport(report: TestReportSummary, format: "html" | "xlsx"
     if (format === "html") {
       downloadTextFile(fullReport.htmlContent, `${buildReportBaseName(report)}.html`, "text/html;charset=utf-8");
     } else {
-      downloadXlsxFromCsv(fullReport.csvContent, `${buildReportBaseName(report)}.xlsx`, "Test Report");
+      await downloadXlsxFromCsv(fullReport.csvContent, `${buildReportBaseName(report)}.xlsx`, "Test Report");
     }
 
     statusMessage.value = `已下载报告：${report.title}（${format === "html" ? "HTML" : "XLSX"}）`;
