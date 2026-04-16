@@ -1,10 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import {
+  createTestReportBodySchema,
   firmwareFileBodySchema,
   firmwareStartBodySchema,
   grantSecurityBodySchema,
   invokeCcBodySchema,
+  listTestReportsQuerySchema,
   loginBodySchema,
   nodeIdParamSchema,
   runTestBodySchema,
@@ -269,6 +271,24 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/tests/run", async (request) => {
     const payload = runTestBodySchema.parse(request.body ?? {});
     return await services.testEngine.createRun(payload);
+  });
+
+  app.post("/api/tests/reports", async (request) => {
+    const payload = createTestReportBodySchema.parse(request.body ?? {});
+    return services.testEngine.createReport(payload);
+  });
+
+  app.get("/api/tests/reports", async (request) => {
+    const query = listTestReportsQuerySchema.parse(request.query ?? {});
+    return { items: services.testEngine.listReports(query.nodeId) };
+  });
+
+  app.get("/api/tests/reports/:reportId", async (request: FastifyRequest<{ Params: { reportId: string } }>, reply) => {
+    const report = services.testEngine.getReport(request.params.reportId);
+    if (!report) {
+      return reply.code(404).send({ message: "Test report not found." });
+    }
+    return report;
   });
 
   app.get("/api/tests/runs", async () => {

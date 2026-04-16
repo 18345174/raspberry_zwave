@@ -185,6 +185,21 @@ export interface TestLogRecord {
   payloadJson?: Record<string, unknown>;
 }
 
+export interface TestReportSummary {
+  id: string;
+  nodeId: number;
+  title: string;
+  status: string;
+  createdAt: string;
+  sourceRunIds: string[];
+  summaryJson: Record<string, unknown>;
+}
+
+export interface TestReportRecord extends TestReportSummary {
+  htmlContent: string;
+  csvContent: string;
+}
+
 export interface SystemHealth {
   ok: boolean;
   uptimeSec: number;

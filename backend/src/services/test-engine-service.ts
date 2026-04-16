@@ -1,4 +1,13 @@
-import type { CreateTestRunInput, NodeDetail, TestLogRecord, TestRunRecord, TestRunStatus } from "../domain/types.js";
+import type {
+  CreateTestReportInput,
+  CreateTestRunInput,
+  NodeDetail,
+  TestLogRecord,
+  TestReportRecord,
+  TestReportSummary,
+  TestRunRecord,
+  TestRunStatus,
+} from "../domain/types.js";
 import { CommandClasses, getCCName } from "@zwave-js/core";
 import { DatabaseService } from "../storage/database.js";
 import { EventBus } from "./event-bus.js";
@@ -51,6 +60,39 @@ export class TestEngineService {
 
   public getRunLogs(runId: string): TestLogRecord[] {
     return this.storage.listTestLogs(runId);
+  }
+
+  public createReport(input: CreateTestReportInput): TestReportSummary {
+    const record: TestReportRecord = {
+      id: createId("test_report"),
+      nodeId: input.nodeId,
+      title: input.title,
+      status: input.status,
+      createdAt: nowIso(),
+      sourceRunIds: input.sourceRunIds,
+      summaryJson: input.summaryJson,
+      htmlContent: input.htmlContent,
+      csvContent: input.csvContent,
+    };
+
+    this.storage.createTestReport(record);
+    return this.storage.listTestReports(record.nodeId).find((item) => item.id === record.id) ?? {
+      id: record.id,
+      nodeId: record.nodeId,
+      title: record.title,
+      status: record.status,
+      createdAt: record.createdAt,
+      sourceRunIds: record.sourceRunIds,
+      summaryJson: record.summaryJson,
+    };
+  }
+
+  public listReports(nodeId?: number): TestReportSummary[] {
+    return this.storage.listTestReports(nodeId);
+  }
+
+  public getReport(reportId: string): TestReportRecord | undefined {
+    return this.storage.getTestReport(reportId);
   }
 
   public getActiveRunId(): string | undefined {

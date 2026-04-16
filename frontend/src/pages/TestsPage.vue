@@ -3,7 +3,8 @@ import { computed, ref, watch } from "vue";
 
 import { apiClient } from "../api/client";
 import { usePlatformStore } from "../stores/platform";
-import type { NodeSummary, TestDefinition, TestLogRecord, TestRunRecord } from "../types";
+import type { NodeSummary, TestDefinition, TestLogRecord, TestReportSummary, TestRunRecord } from "../types";
+import { downloadTextFile, downloadXlsxFromCsv } from "../utils/report-files";
 import { translateRunStatus } from "../utils/ui-text";
 
 type TestPageStage = "devices" | "definitions" | "execution";
@@ -42,6 +43,10 @@ const executionBusy = ref(false);
 const executionError = ref("");
 const currentExecutionRunId = ref("");
 const executionToken = ref(0);
+const reportHistory = ref<TestReportSummary[]>([]);
+const reportHistoryLoading = ref(false);
+const reportActionBusy = ref(false);
+const reportStatusMessage = ref("");
 let supportLoadToken = 0;
 
 const TEST_DEFINITION_PRIORITY: Record<string, number> = {
@@ -94,6 +99,14 @@ const completedExecutionCount = computed(() => {
 
 const passedExecutionCount = computed(() => {
   return executionItems.value.filter((item) => getExecutionItemStatus(item) === "passed").length;
+});
+
+const canExportExecutionReport = computed(() => {
+  if (pageStage.value !== "execution" || executionBusy.value || reportActionBusy.value) {
+    return false;
+  }
+
+  return executionItems.value.some((item) => item.runId || item.status !== "pending");
 });
 
 const progressPercent = computed(() => {
@@ -182,6 +195,22 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function escapeCsvField(value: string): string {
+  if (/[",\n]/.test(value)) {
+    return `"${value.replaceAll("\"", "\"\"")}"`;
+  }
+  return value;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -236,6 +265,38 @@ function formatDefinitionList(definitions: TestDefinition[]): string {
   return sortDefinitions(definitions).map((definition) => definition.name).join(" / ");
 }
 
+function formatTimestamp(value?: string): string {
+  if (!value) {
+    return "-";
+  }
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return value;
+  }
+
+  return new Date(timestamp).toLocaleString();
+}
+
+function formatDuration(durationMs?: number): string {
+  if (typeof durationMs !== "number" || Number.isNaN(durationMs) || durationMs < 0) {
+    return "-";
+  }
+
+  if (durationMs < 1000) {
+    return `${durationMs} ms`;
+  }
+
+  const seconds = durationMs / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds >= 10 ? 1 : 2)} s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainSeconds = Math.round(seconds % 60);
+  return `${minutes} 分 ${remainSeconds} 秒`;
+}
+
 function formatLogPayload(log: TestLogRecord): string {
   return log.payloadJson ? JSON.stringify(log.payloadJson, null, 2) : "";
 }
@@ -258,6 +319,13 @@ function getExecutionItemStatus(item: ExecutionItem): ExecutionStatus {
   }
   const liveRun = platform.runs.find((run) => run.id === item.runId);
   return liveRun?.status ?? item.status;
+}
+
+function getExecutionRun(item: ExecutionItem): TestRunRecord | undefined {
+  if (!item.runId) {
+    return undefined;
+  }
+  return platform.runs.find((run) => run.id === item.runId);
 }
 
 function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
@@ -367,6 +435,349 @@ function getPlaceholderStepMessage(item: ExecutionItem): string {
   return "测试完成";
 }
 
+function buildExecutionReportSummaryPayload(): Record<string, unknown> {
+  return {
+    nodeId: selectedNode.value?.nodeId,
+    nodeName: selectedNode.value ? describeNode(selectedNode.value) : undefined,
+    deviceType: selectedNode.value?.deviceType,
+    manufacturer: selectedNode.value?.manufacturer,
+    overallStatus: overallExecutionStatus.value,
+    overallStatusLabel: translateExecutionStatus(overallExecutionStatus.value),
+    totalCount: executionItems.value.length,
+    completedCount: completedExecutionCount.value,
+    passedCount: passedExecutionCount.value,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function buildExecutionReportBaseName(reportId?: string): string {
+  const nodePart = selectedNode.value ? `node-${selectedNode.value.nodeId}` : "node-unknown";
+  const timePart = new Date().toISOString().replaceAll(":", "-");
+  return reportId
+    ? `zwave-test-report-${nodePart}-${reportId}`
+    : `zwave-test-report-${nodePart}-${timePart}`;
+}
+
+function buildExecutionReportHtml(): string {
+  const reportGeneratedAt = new Date().toLocaleString();
+  const nodeTitle = selectedNode.value ? `#${selectedNode.value.nodeId} ${describeNode(selectedNode.value)}` : "-";
+  const overallStatusText = translateExecutionStatus(overallExecutionStatus.value);
+  const executionSummary = [
+    ["报告生成时间", reportGeneratedAt],
+    ["测试节点", nodeTitle],
+    ["设备类型", selectedNode.value?.deviceType || "未识别"],
+    ["制造商", selectedNode.value?.manufacturer || "-"],
+    ["总体状态", overallStatusText],
+    ["测试项总数", String(executionItems.value.length)],
+    ["已完成", String(completedExecutionCount.value)],
+    ["已通过", String(passedExecutionCount.value)],
+  ];
+
+  const summaryRows = executionSummary.map(([label, value]) => `
+      <tr>
+        <th>${escapeHtml(label)}</th>
+        <td>${escapeHtml(value)}</td>
+      </tr>`).join("");
+
+  const executionSections = executionItems.value.map((item, index) => {
+    const run = getExecutionRun(item);
+    const logs = getExecutionLogs(item);
+    const logRows = logs.length
+      ? logs.map((log, logIndex) => `
+          <tr>
+            <td>${logIndex + 1}</td>
+            <td>${escapeHtml(log.message)}</td>
+            <td>${escapeHtml(formatTimestamp(log.timestamp))}</td>
+            <td>${escapeHtml(log.level)}</td>
+          </tr>`).join("")
+      : `
+          <tr>
+            <td>1</td>
+            <td>${escapeHtml(getPlaceholderStepMessage(item))}</td>
+            <td>-</td>
+            <td>-</td>
+          </tr>`;
+
+    return `
+      <section class="test-card">
+        <div class="test-card-header">
+          <div>
+            <h2>${index + 1}. ${escapeHtml(item.definition.name)}</h2>
+            <p class="meta-line">状态：${escapeHtml(translateExecutionStatus(getExecutionItemStatus(item)))}</p>
+          </div>
+          <div class="meta-grid">
+            <span>任务 ID：${escapeHtml(item.runId || "-")}</span>
+            <span>开始时间：${escapeHtml(formatTimestamp(run?.startedAt))}</span>
+            <span>结束时间：${escapeHtml(formatTimestamp(run?.finishedAt))}</span>
+            <span>耗时：${escapeHtml(formatDuration(run?.durationMs))}</span>
+          </div>
+        </div>
+
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>步骤</th>
+              <th>时间</th>
+              <th>级别</th>
+            </tr>
+          </thead>
+          <tbody>${logRows}
+          </tbody>
+        </table>
+      </section>`;
+  }).join("");
+
+  const errorSection = executionError.value
+    ? `<section class="notice-card error-card"><strong>错误信息：</strong>${escapeHtml(executionError.value)}</section>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Z-Wave 测试报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f172e;
+      --muted: #6f6782;
+      --line: #ddd6ef;
+      --paper: #f6f3fb;
+      --card: #ffffff;
+      --accent: #5c39b5;
+      --accent-soft: #efe7ff;
+      --good: #117a50;
+      --bad: #af3f31;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px;
+      background: linear-gradient(180deg, #f7f4fc 0%, #f0ebf8 100%);
+      color: var(--ink);
+      font: 14px/1.6 "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .report-shell {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      gap: 20px;
+    }
+    .hero, .summary-card, .test-card, .notice-card {
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: 0 18px 36px rgba(76, 52, 130, 0.08);
+    }
+    .hero, .summary-card, .notice-card {
+      padding: 24px 28px;
+    }
+    .hero h1, .test-card h2 { margin: 0; }
+    .hero p, .meta-line { margin: 6px 0 0; color: var(--muted); }
+    .summary-table, .log-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .summary-table th, .summary-table td, .log-table th, .log-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #eee8fa;
+      text-align: left;
+      vertical-align: top;
+    }
+    .summary-table th {
+      width: 180px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .test-card {
+      overflow: hidden;
+    }
+    .test-card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 24px 28px 18px;
+      background: linear-gradient(180deg, rgba(239, 231, 255, 0.78), rgba(255, 255, 255, 0.98));
+    }
+    .meta-grid {
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      text-align: right;
+      white-space: nowrap;
+    }
+    .log-table thead {
+      background: var(--paper);
+    }
+    .log-table th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .error-card {
+      border-color: rgba(175, 63, 49, 0.24);
+      color: var(--bad);
+    }
+    @media (max-width: 768px) {
+      body { padding: 16px; }
+      .test-card-header { grid-template-columns: 1fr; display: grid; }
+      .meta-grid { text-align: left; white-space: normal; }
+      .summary-table th { width: 120px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="report-shell">
+    <section class="hero">
+      <h1>Z-Wave 自动化测试报告</h1>
+      <p>该报告由测试中心一键导出，包含本次执行的总体结果与分项步骤记录。</p>
+    </section>
+
+    <section class="summary-card">
+      <table class="summary-table">
+        <tbody>${summaryRows}
+        </tbody>
+      </table>
+    </section>
+
+    ${errorSection}
+    ${executionSections}
+  </main>
+</body>
+</html>`;
+}
+
+function buildExecutionReportCsv(): string {
+  const lines = [
+    ["报告类型", "Z-Wave 自动化测试报告"],
+    ["报告生成时间", formatTimestamp(new Date().toISOString())],
+    ["测试节点", selectedNode.value ? `#${selectedNode.value.nodeId} ${describeNode(selectedNode.value)}` : "-"],
+    ["设备类型", selectedNode.value?.deviceType || "未识别"],
+    ["制造商", selectedNode.value?.manufacturer || "-"],
+    ["总体状态", translateExecutionStatus(overallExecutionStatus.value)],
+    ["测试项总数", String(executionItems.value.length)],
+    ["已完成", String(completedExecutionCount.value)],
+    ["已通过", String(passedExecutionCount.value)],
+    [],
+    ["测试项序号", "测试项", "任务 ID", "状态", "开始时间", "结束时间", "耗时", "步骤序号", "步骤内容", "步骤时间", "日志级别"],
+  ];
+
+  executionItems.value.forEach((item, index) => {
+    const run = getExecutionRun(item);
+    const logs = getExecutionLogs(item);
+
+    if (!logs.length) {
+      lines.push([
+        String(index + 1),
+        item.definition.name,
+        item.runId || "-",
+        translateExecutionStatus(getExecutionItemStatus(item)),
+        formatTimestamp(run?.startedAt),
+        formatTimestamp(run?.finishedAt),
+        formatDuration(run?.durationMs),
+        "1",
+        getPlaceholderStepMessage(item),
+        "-",
+        "-",
+      ]);
+      return;
+    }
+
+    logs.forEach((log, logIndex) => {
+      lines.push([
+        String(index + 1),
+        item.definition.name,
+        item.runId || "-",
+        translateExecutionStatus(getExecutionItemStatus(item)),
+        formatTimestamp(run?.startedAt),
+        formatTimestamp(run?.finishedAt),
+        formatDuration(run?.durationMs),
+        String(logIndex + 1),
+        log.message,
+        formatTimestamp(log.timestamp),
+        log.level,
+      ]);
+    });
+  });
+
+  return lines
+    .map((row) => row.map((cell) => escapeCsvField(String(cell ?? ""))).join(","))
+    .join("\n");
+}
+
+async function loadReportHistory(): Promise<void> {
+  if (!selectedNodeId.value) {
+    reportHistory.value = [];
+    return;
+  }
+
+  reportHistoryLoading.value = true;
+  try {
+    const response = await apiClient.listReports(selectedNodeId.value);
+    reportHistory.value = response.items;
+  } catch (error) {
+    reportStatusMessage.value = getErrorMessage(error);
+  } finally {
+    reportHistoryLoading.value = false;
+  }
+}
+
+async function generateAndSaveExecutionReport(): Promise<void> {
+  if (!selectedNode.value || !canExportExecutionReport.value) {
+    return;
+  }
+
+  reportActionBusy.value = true;
+  reportStatusMessage.value = "";
+
+  try {
+    const htmlContent = buildExecutionReportHtml();
+    const csvContent = buildExecutionReportCsv();
+    const createdReport = await apiClient.createReport({
+      nodeId: selectedNode.value.nodeId,
+      title: `${describeNode(selectedNode.value)} 测试报告`,
+      status: translateExecutionStatus(overallExecutionStatus.value),
+      sourceRunIds: executionItems.value.map((item) => item.runId).filter((value): value is string => Boolean(value)),
+      summaryJson: buildExecutionReportSummaryPayload(),
+      htmlContent,
+      csvContent,
+    });
+
+    const baseName = buildExecutionReportBaseName(createdReport.id);
+    downloadTextFile(htmlContent, `${baseName}.html`, "text/html;charset=utf-8");
+    downloadXlsxFromCsv(csvContent, `${baseName}.xlsx`, "Test Report");
+
+    reportStatusMessage.value = `测试报告已生成，并已保存到历史记录（报告 ID：${createdReport.id}）。`;
+    await loadReportHistory();
+  } catch (error) {
+    reportStatusMessage.value = getErrorMessage(error);
+  } finally {
+    reportActionBusy.value = false;
+  }
+}
+
+async function downloadSavedReport(reportId: string, format: "html" | "xlsx"): Promise<void> {
+  reportActionBusy.value = true;
+  reportStatusMessage.value = "";
+
+  try {
+    const report = await apiClient.getReport(reportId);
+    if (format === "html") {
+      downloadTextFile(report.htmlContent, `${buildExecutionReportBaseName(report.id)}.html`, "text/html;charset=utf-8");
+    } else {
+      downloadXlsxFromCsv(report.csvContent, `${buildExecutionReportBaseName(report.id)}.xlsx`, "Test Report");
+    }
+    reportStatusMessage.value = `已下载历史测试报告：${report.title}（${format === "html" ? "HTML" : "XLSX"}）`;
+  } catch (error) {
+    reportStatusMessage.value = getErrorMessage(error);
+  } finally {
+    reportActionBusy.value = false;
+  }
+}
+
 function toggleDefinition(definitionId: string): void {
   const definition = selectedNodeDefinitions.value.find((item) => item.id === definitionId);
   if (!definition) {
@@ -467,6 +878,15 @@ watch(
     if (pageStage.value !== "devices" && selectedNodeId.value && definitions.length === 0) {
       pageStage.value = "devices";
     }
+  },
+  { immediate: true },
+);
+
+watch(
+  selectedNodeId,
+  async () => {
+    reportStatusMessage.value = "";
+    await loadReportHistory();
   },
   { immediate: true },
 );
@@ -594,6 +1014,9 @@ async function cancelExecution(): Promise<void> {
           <button v-if="pageStage === 'execution'" class="ghost-button" :disabled="executionBusy" @click="backToDefinitionSelector">
             重新选择测试项
           </button>
+          <button v-if="pageStage === 'execution'" class="ghost-button" :disabled="!canExportExecutionReport" @click="generateAndSaveExecutionReport">
+            生成测试报告
+          </button>
           <button v-if="pageStage === 'execution' && executionBusy" class="ghost-button danger" @click="cancelExecution">
             取消当前测试
           </button>
@@ -707,6 +1130,7 @@ async function cancelExecution(): Promise<void> {
         </div>
 
         <p v-if="executionError" class="warning-banner warning-banner-error">{{ executionError }}</p>
+        <p v-if="reportStatusMessage" class="status-banner">{{ reportStatusMessage }}</p>
 
         <div class="execution-list">
           <article v-for="(item, index) in executionItems" :key="item.definition.id" class="execution-item" :data-status="getExecutionItemStatus(item)">
@@ -761,6 +1185,41 @@ async function cancelExecution(): Promise<void> {
             </div>
           </article>
         </div>
+
+        <section class="report-history-card">
+          <div class="section-heading section-heading-tight">
+            <div>
+              <p class="section-kicker">报告历史</p>
+              <h4>已保存的测试报告</h4>
+            </div>
+            <div class="button-row">
+              <button class="ghost-button" :disabled="reportHistoryLoading || reportActionBusy" @click="loadReportHistory">
+                刷新报告
+              </button>
+            </div>
+          </div>
+
+          <p v-if="reportHistoryLoading" class="empty-state">正在加载测试报告历史...</p>
+          <div v-else-if="reportHistory.length" class="report-history-list">
+            <article v-for="report in reportHistory" :key="report.id" class="report-history-item">
+              <div>
+                <strong>{{ report.title }}</strong>
+                <p class="report-history-meta">
+                  报告 ID：{{ report.id }} · 生成时间：{{ formatTimestamp(report.createdAt) }} · 状态：{{ report.status }}
+                </p>
+              </div>
+              <div class="button-row">
+                <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'html')">
+                  下载 HTML
+                </button>
+                <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'xlsx')">
+                  下载 XLSX
+                </button>
+              </div>
+            </article>
+          </div>
+          <p v-else class="empty-state">当前节点还没有历史测试报告，完成测试后可点击“生成测试报告”保存。</p>
+        </section>
       </div>
     </section>
   </div>
@@ -802,6 +1261,14 @@ async function cancelExecution(): Promise<void> {
   border-color: rgba(165, 58, 44, 0.24);
   background: rgba(255, 239, 236, 0.92);
   color: var(--bad);
+}
+
+.status-banner {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(92, 57, 181, 0.18);
+  background: rgba(244, 239, 255, 0.82);
+  color: var(--accent-deep);
 }
 
 .device-table {
@@ -974,6 +1441,38 @@ async function cancelExecution(): Promise<void> {
 
 .execution-panel {
   gap: 16px;
+}
+
+.report-history-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.report-history-card h4,
+.report-history-meta {
+  margin: 0;
+}
+
+.report-history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.report-history-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid rgba(92, 57, 181, 0.14);
+  background: rgba(250, 247, 255, 0.88);
+}
+
+.report-history-meta {
+  color: var(--muted);
 }
 
 .manual-unlock-overlay {

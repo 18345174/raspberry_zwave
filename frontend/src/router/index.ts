@@ -6,6 +6,7 @@ import FirmwareUpgradePage from "../pages/FirmwareUpgradePage.vue";
 import InclusionPage from "../pages/InclusionPage.vue";
 import LoginPage from "../pages/LoginPage.vue";
 import NodesPage from "../pages/NodesPage.vue";
+import TestReportsPage from "../pages/TestReportsPage.vue";
 import TestsPage from "../pages/TestsPage.vue";
 import SystemPage from "../pages/SystemPage.vue";
 
@@ -20,6 +21,7 @@ export const router = createRouter({
     { path: "/contact-config", component: ContactConfigPage },
     { path: "/firmware-upgrade", component: FirmwareUpgradePage },
     { path: "/tests", component: TestsPage },
+    { path: "/test-reports", component: TestReportsPage },
     { path: "/system", component: SystemPage },
   ],
 });

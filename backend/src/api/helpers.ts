@@ -45,6 +45,20 @@ export const runTestBodySchema = z.object({
   inputs: z.record(z.unknown()).default({}),
 });
 
+export const createTestReportBodySchema = z.object({
+  nodeId: z.number().int().positive(),
+  title: z.string().min(1),
+  status: z.string().min(1),
+  sourceRunIds: z.array(z.string().min(1)).default([]),
+  summaryJson: z.record(z.unknown()).default({}),
+  htmlContent: z.string().min(1),
+  csvContent: z.string().min(1),
+});
+
+export const listTestReportsQuerySchema = z.object({
+  nodeId: z.coerce.number().int().positive().optional(),
+});
+
 export const firmwareFileBodySchema = z.object({
   filename: z.string().min(1),
   contentBase64: z.string().min(1),

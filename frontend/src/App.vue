@@ -15,6 +15,7 @@ const navItems = [
   { to: "/contact-config", label: "门磁配置" },
   { to: "/firmware-upgrade", label: "固件升级" },
   { to: "/tests", label: "测试" },
+  { to: "/test-reports", label: "测试报告" },
   { to: "/system", label: "系统" },
 ];
 

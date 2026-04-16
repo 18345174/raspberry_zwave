@@ -264,6 +264,31 @@ export interface TestLogRecord {
   payloadJson?: Record<string, unknown>;
 }
 
+export interface TestReportSummary {
+  id: string;
+  nodeId: number;
+  title: string;
+  status: string;
+  createdAt: string;
+  sourceRunIds: string[];
+  summaryJson: Record<string, unknown>;
+}
+
+export interface TestReportRecord extends TestReportSummary {
+  htmlContent: string;
+  csvContent: string;
+}
+
+export interface CreateTestReportInput {
+  nodeId: number;
+  title: string;
+  status: string;
+  sourceRunIds: string[];
+  summaryJson: Record<string, unknown>;
+  htmlContent: string;
+  csvContent: string;
+}
+
 export interface CreateTestRunInput {
   testDefinitionId: string;
   nodeId: number;

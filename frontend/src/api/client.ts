@@ -12,6 +12,8 @@ import type {
   SystemHealth,
   TestDefinition,
   TestLogRecord,
+  TestReportRecord,
+  TestReportSummary,
   TestRunRecord,
 } from "../types";
 
@@ -187,6 +189,27 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+  createReport(payload: {
+    nodeId: number;
+    title: string;
+    status: string;
+    sourceRunIds: string[];
+    summaryJson: Record<string, unknown>;
+    htmlContent: string;
+    csvContent: string;
+  }) {
+    return request<TestReportSummary>("/api/tests/reports", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  listReports(nodeId?: number) {
+    const query = nodeId == undefined ? "" : `?nodeId=${nodeId}`;
+    return request<{ items: TestReportSummary[] }>(`/api/tests/reports${query}`);
+  },
+  getReport(reportId: string) {
+    return request<TestReportRecord>(`/api/tests/reports/${reportId}`);
   },
   cancelRun(runId: string) {
     return request<{ ok: boolean }>(`/api/tests/runs/${runId}/cancel`, { method: "POST" });

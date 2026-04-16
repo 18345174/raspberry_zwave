@@ -6,6 +6,8 @@ import type {
   NodeDetail,
   TestDefinition,
   TestLogRecord,
+  TestReportRecord,
+  TestReportSummary,
   TestRunRecord,
 } from "../domain/types.js";
 import { nowIso } from "../utils/time.js";
@@ -96,6 +98,18 @@ export class DatabaseService {
         step_key TEXT NOT NULL,
         message TEXT NOT NULL,
         payload_json TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS test_reports (
+        id TEXT PRIMARY KEY,
+        node_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        source_run_ids_json TEXT NOT NULL,
+        summary_json TEXT NOT NULL,
+        html_content TEXT NOT NULL,
+        csv_content TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -419,6 +433,93 @@ export class DatabaseService {
       message: row.message,
       payloadJson: row.payload_json ? JSON.parse(row.payload_json) : undefined,
     }));
+  }
+
+  public createTestReport(record: TestReportRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO test_reports (
+          id, node_id, title, status, created_at, source_run_ids_json, summary_json, html_content, csv_content
+        ) VALUES (
+          @id, @node_id, @title, @status, @created_at, @source_run_ids_json, @summary_json, @html_content, @csv_content
+        )`,
+      )
+      .run({
+        id: record.id,
+        node_id: record.nodeId,
+        title: record.title,
+        status: record.status,
+        created_at: record.createdAt,
+        source_run_ids_json: JSON.stringify(record.sourceRunIds),
+        summary_json: JSON.stringify(record.summaryJson),
+        html_content: record.htmlContent,
+        csv_content: record.csvContent,
+      });
+  }
+
+  public listTestReports(nodeId?: number): TestReportSummary[] {
+    const query = nodeId == undefined
+      ? `SELECT id, node_id, title, status, created_at, source_run_ids_json, summary_json
+           FROM test_reports ORDER BY created_at DESC`
+      : `SELECT id, node_id, title, status, created_at, source_run_ids_json, summary_json
+           FROM test_reports WHERE node_id = ? ORDER BY created_at DESC`;
+
+    const rows = (nodeId == undefined
+      ? this.db.prepare(query).all()
+      : this.db.prepare(query).all(nodeId)) as Array<{
+      id: string;
+      node_id: number;
+      title: string;
+      status: string;
+      created_at: string;
+      source_run_ids_json: string;
+      summary_json: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      nodeId: row.node_id,
+      title: row.title,
+      status: row.status,
+      createdAt: row.created_at,
+      sourceRunIds: JSON.parse(row.source_run_ids_json) as string[],
+      summaryJson: JSON.parse(row.summary_json) as Record<string, unknown>,
+    }));
+  }
+
+  public getTestReport(id: string): TestReportRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, node_id, title, status, created_at, source_run_ids_json, summary_json, html_content, csv_content
+         FROM test_reports WHERE id = ?`,
+      )
+      .get(id) as
+      | {
+          id: string;
+          node_id: number;
+          title: string;
+          status: string;
+          created_at: string;
+          source_run_ids_json: string;
+          summary_json: string;
+          html_content: string;
+          csv_content: string;
+        }
+      | undefined;
+
+    return row
+      ? {
+          id: row.id,
+          nodeId: row.node_id,
+          title: row.title,
+          status: row.status,
+          createdAt: row.created_at,
+          sourceRunIds: JSON.parse(row.source_run_ids_json) as string[],
+          summaryJson: JSON.parse(row.summary_json) as Record<string, unknown>,
+          htmlContent: row.html_content,
+          csvContent: row.csv_content,
+        }
+      : undefined;
   }
 
   public createAuthSession(record: AuthSessionRecord): void {
