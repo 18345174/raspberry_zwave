@@ -18,9 +18,9 @@ export const lockBasicDefinition: ExecutableTestDefinition = {
     key: "lock-basic",
     name: "门锁开关门测试",
     deviceType: "door-lock",
-    version: 8,
+    version: 9,
     enabled: true,
-    description: "先读取门锁当前锁舌状态，发送第一次命令后立即主动查询当前状态；确认成功后继续执行第二步恢复，并再次立即主动查询状态。",
+    description: "先读取门锁当前锁舌状态，发送第一次命令后等待 5 秒再主动查询当前状态；确认成功后继续执行第二步恢复，并再次等待 5 秒后主动查询状态。",
     inputSchema: {},
   },
   supports(node) {

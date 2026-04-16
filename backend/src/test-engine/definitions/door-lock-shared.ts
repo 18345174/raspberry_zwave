@@ -2,6 +2,8 @@ import { DoorLockMode } from "zwave-js";
 
 import type { TestExecutionContext } from "../types.js";
 
+const DOOR_LOCK_POST_COMMAND_WAIT_MS = 5000;
+
 export interface DoorLockStatusSnapshot {
   currentMode?: number;
   targetMode?: number;
@@ -95,7 +97,13 @@ export async function performDoorLockCommand(
   });
 
   try {
-    await context.log("info", `${options.phaseKey}.poll`, "命令已发送，立即主动查询门锁状态", {
+    await context.log("info", `${options.phaseKey}.wait`, `命令已发送，等待 ${DOOR_LOCK_POST_COMMAND_WAIT_MS / 1000} 秒后主动查询门锁状态`, {
+      expectedBoltStatus: options.expectedStatus,
+      targetMode: options.targetMode,
+      waitMs: DOOR_LOCK_POST_COMMAND_WAIT_MS,
+    });
+    await context.wait(DOOR_LOCK_POST_COMMAND_WAIT_MS);
+    await context.log("info", `${options.phaseKey}.poll`, "开始主动查询门锁状态", {
       expectedBoltStatus: options.expectedStatus,
       targetMode: options.targetMode,
     });
