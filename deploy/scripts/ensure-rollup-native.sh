@@ -171,17 +171,42 @@ collect_missing_esbuild_native() {
 }
 
 install_queued_packages() {
-  local index
+  local index package_spec
 
   for index in "${!QUEUE_ROOTS[@]}"; do
     echo "[native-deps] Installing missing native packages in ${QUEUE_ROOTS[$index]}: ${QUEUE_SPECS[$index]}"
-    npm install --prefix "${QUEUE_ROOTS[$index]}" --no-save --include=optional ${QUEUE_SPECS[$index]}
+    for package_spec in ${QUEUE_SPECS[$index]}; do
+      install_native_package "${QUEUE_ROOTS[$index]}" "$package_spec"
+    done
   done
 }
 
 reset_queue() {
   QUEUE_ROOTS=()
   QUEUE_SPECS=()
+}
+
+install_native_package() {
+  local install_root=$1
+  local package_spec=$2
+  local package_name=${package_spec%@*}
+  local target_dir="$install_root/node_modules/$package_name"
+  local parent_dir
+  local temp_dir tarball
+
+  parent_dir=$(dirname "$target_dir")
+  temp_dir=$(mktemp -d)
+  trap 'rm -rf "$temp_dir"' RETURN
+
+  tarball=$(npm pack --silent --pack-destination "$temp_dir" "$package_spec" | tail -n 1)
+
+  rm -rf "$target_dir"
+  mkdir -p "$parent_dir"
+  tar -xzf "$temp_dir/$tarball" -C "$temp_dir"
+  mv "$temp_dir/package" "$target_dir"
+
+  trap - RETURN
+  rm -rf "$temp_dir"
 }
 
 shopt -s nullglob
