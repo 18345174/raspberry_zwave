@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 
 import { apiClient } from "../api/client";
 import { usePlatformStore } from "../stores/platform";
-import type { NodeSummary, TestDefinition, TestLogRecord, TestReportSummary, TestRunRecord } from "../types";
+import type { NodeSummary, TestDefinition, TestLogRecord, TestRunRecord } from "../types";
 import { downloadTextFile, downloadXlsxFromCsv } from "../utils/report-files";
 import { translateRunStatus } from "../utils/ui-text";
 
@@ -43,8 +43,6 @@ const executionBusy = ref(false);
 const executionError = ref("");
 const currentExecutionRunId = ref("");
 const executionToken = ref(0);
-const reportHistory = ref<TestReportSummary[]>([]);
-const reportHistoryLoading = ref(false);
 const reportActionBusy = ref(false);
 const reportStatusMessage = ref("");
 let supportLoadToken = 0;
@@ -708,23 +706,6 @@ function buildExecutionReportCsv(): string {
     .join("\n");
 }
 
-async function loadReportHistory(): Promise<void> {
-  if (!selectedNodeId.value) {
-    reportHistory.value = [];
-    return;
-  }
-
-  reportHistoryLoading.value = true;
-  try {
-    const response = await apiClient.listReports(selectedNodeId.value);
-    reportHistory.value = response.items;
-  } catch (error) {
-    reportStatusMessage.value = getErrorMessage(error);
-  } finally {
-    reportHistoryLoading.value = false;
-  }
-}
-
 async function generateAndSaveExecutionReport(): Promise<void> {
   if (!selectedNode.value || !canExportExecutionReport.value) {
     return;
@@ -751,45 +732,6 @@ async function generateAndSaveExecutionReport(): Promise<void> {
     await downloadXlsxFromCsv(csvContent, `${baseName}.xlsx`, "Test Report");
 
     reportStatusMessage.value = `测试报告已生成，并已保存到历史记录（报告 ID：${createdReport.id}）。`;
-    await loadReportHistory();
-  } catch (error) {
-    reportStatusMessage.value = getErrorMessage(error);
-  } finally {
-    reportActionBusy.value = false;
-  }
-}
-
-async function downloadSavedReport(reportId: string, format: "html" | "xlsx"): Promise<void> {
-  reportActionBusy.value = true;
-  reportStatusMessage.value = "";
-
-  try {
-    const report = await apiClient.getReport(reportId);
-    if (format === "html") {
-      downloadTextFile(report.htmlContent, `${buildExecutionReportBaseName(report.id)}.html`, "text/html;charset=utf-8");
-    } else {
-      await downloadXlsxFromCsv(report.csvContent, `${buildExecutionReportBaseName(report.id)}.xlsx`, "Test Report");
-    }
-    reportStatusMessage.value = `已下载历史测试报告：${report.title}（${format === "html" ? "HTML" : "XLSX"}）`;
-  } catch (error) {
-    reportStatusMessage.value = getErrorMessage(error);
-  } finally {
-    reportActionBusy.value = false;
-  }
-}
-
-async function deleteSavedReport(report: TestReportSummary): Promise<void> {
-  if (!window.confirm(`确认删除报告“${report.title}”吗？`)) {
-    return;
-  }
-
-  reportActionBusy.value = true;
-  reportStatusMessage.value = "";
-
-  try {
-    await apiClient.deleteReport(report.id);
-    reportHistory.value = reportHistory.value.filter((item) => item.id !== report.id);
-    reportStatusMessage.value = `已删除历史测试报告：${report.title}`;
   } catch (error) {
     reportStatusMessage.value = getErrorMessage(error);
   } finally {
@@ -905,7 +847,6 @@ watch(
   selectedNodeId,
   async () => {
     reportStatusMessage.value = "";
-    await loadReportHistory();
   },
   { immediate: true },
 );
@@ -1205,50 +1146,6 @@ async function cancelExecution(): Promise<void> {
           </article>
         </div>
 
-        <section class="report-history-card">
-          <div class="section-heading section-heading-tight">
-            <div>
-              <p class="section-kicker">报告历史</p>
-              <h4>已保存的测试报告</h4>
-            </div>
-            <div class="button-row">
-              <button class="ghost-button" :disabled="reportHistoryLoading || reportActionBusy" @click="loadReportHistory">
-                刷新报告
-              </button>
-            </div>
-          </div>
-
-          <p v-if="reportHistoryLoading" class="empty-state">正在加载测试报告历史...</p>
-          <div v-else-if="reportHistory.length" class="report-history-list">
-            <article v-for="report in reportHistory" :key="report.id" class="report-history-item">
-              <div class="report-history-main">
-                <div class="report-history-header">
-                  <div>
-                    <strong>{{ report.title }}</strong>
-                    <p class="report-history-meta">
-                      报告 ID：{{ report.id }} · 生成时间：{{ formatTimestamp(report.createdAt) }}
-                    </p>
-                  </div>
-                  <div class="button-row report-history-actions">
-                    <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'html')">
-                      下载 HTML
-                    </button>
-                    <button class="ghost-button compact-button" :disabled="reportActionBusy" @click="downloadSavedReport(report.id, 'xlsx')">
-                      下载 XLSX
-                    </button>
-                    <button class="ghost-button compact-button danger-button" :disabled="reportActionBusy" @click="deleteSavedReport(report)">
-                      删除
-                    </button>
-                  </div>
-                </div>
-                <p class="report-history-meta">
-                  状态：{{ report.status }}
-                </p>
-              </div>
-            </article>
-          </div>
-          <p v-else class="empty-state">当前节点还没有历史测试报告，完成测试后可点击“生成测试报告”保存。</p>
-        </section>
       </div>
     </section>
   </div>
@@ -1470,68 +1367,6 @@ async function cancelExecution(): Promise<void> {
 
 .execution-panel {
   gap: 16px;
-}
-
-.report-history-card {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.74);
-}
-
-.report-history-card h4,
-.report-history-meta {
-  margin: 0;
-}
-
-.report-history-list {
-  display: grid;
-  gap: 12px;
-}
-
-.report-history-item {
-  display: grid;
-  gap: 12px;
-  padding: 16px 18px;
-  border: 1px solid rgba(92, 57, 181, 0.14);
-  background: rgba(250, 247, 255, 0.88);
-}
-
-.report-history-main {
-  display: grid;
-  gap: 8px;
-}
-
-.report-history-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: start;
-}
-
-.report-history-meta {
-  color: var(--muted);
-}
-
-.report-history-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.danger-button {
-  color: var(--bad);
-  border-color: rgba(165, 58, 44, 0.24);
-}
-
-@media (max-width: 760px) {
-  .report-history-header {
-    flex-direction: column;
-  }
-
-  .report-history-actions {
-    justify-content: flex-start;
-  }
 }
 
 .manual-unlock-overlay {
