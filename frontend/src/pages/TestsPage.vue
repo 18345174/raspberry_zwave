@@ -548,6 +548,7 @@ async function startSelectedTests(): Promise<void> {
 
       const finalRun = await waitForRunCompletion(run.id, token);
       currentItem.status = finalRun.status;
+      currentItem.expanded = false;
       currentExecutionRunId.value = "";
 
       if (finalRun.status === "cancelled") {
