@@ -460,52 +460,91 @@ function buildExecutionReportBaseName(reportId?: string): string {
     : `zwave-test-report-${nodePart}-${timePart}`;
 }
 
+function getReportFailureLogs(item: ExecutionItem): TestLogRecord[] {
+  const status = getExecutionItemStatus(item);
+  if (status !== "failed" && status !== "cancelled") {
+    return [];
+  }
+
+  const logs = getExecutionLogs(item);
+  if (logs.length) {
+    return logs;
+  }
+
+  return [{
+    id: `${item.runId ?? item.definition.id}-report-failure`,
+    testRunId: item.runId ?? "",
+    timestamp: new Date().toISOString(),
+    level: "error",
+    stepKey: "report.failure",
+    message: getPlaceholderStepMessage(item),
+  }];
+}
+
+function getReportFailureStep(item: ExecutionItem): string {
+  const failureLogs = getReportFailureLogs(item);
+  return failureLogs.find((log) => log.level === "error")?.message
+    ?? failureLogs.at(-1)?.message
+    ?? "-";
+}
+
+function formatReportFailureLogs(logs: TestLogRecord[]): string {
+  return logs.map((log) => {
+    const payload = log.payloadJson ? ` ${JSON.stringify(log.payloadJson)}` : "";
+    return `[${formatTimestamp(log.timestamp)}] ${log.level.toUpperCase()} ${log.message}${payload}`;
+  }).join("\n");
+}
+
 function buildExecutionReportHtml(): string {
   const reportGeneratedAt = new Date().toLocaleString();
   const nodeTitle = selectedNode.value ? `#${selectedNode.value.nodeId} ${describeNode(selectedNode.value)}` : "-";
   const overallStatusText = translateExecutionStatus(overallExecutionStatus.value);
-  const executionSummary = [
-    ["报告生成时间", reportGeneratedAt],
-    ["测试节点", nodeTitle],
+  const deviceSummary = [
+    ["节点 ID", selectedNode.value ? String(selectedNode.value.nodeId) : "-"],
+    ["设备名称", selectedNode.value ? describeNode(selectedNode.value) : "-"],
     ["设备类型", selectedNode.value?.deviceType || "未识别"],
     ["制造商", selectedNode.value?.manufacturer || "-"],
+    ["产品名称", selectedNode.value?.product || "-"],
+  ];
+  const environmentSummary = [
+    ["报告生成时间", reportGeneratedAt],
     ["总体状态", overallStatusText],
+    ["Controller 状态", platform.status.phase],
+    ["Controller ID", platform.status.controllerId != undefined ? String(platform.status.controllerId) : "-"],
+    ["Home ID", platform.status.homeId || "-"],
+    ["连接端口", platform.status.connectedPortPath || platform.status.selectedPortPath || "-"],
     ["测试项总数", String(executionItems.value.length)],
     ["已完成", String(completedExecutionCount.value)],
     ["已通过", String(passedExecutionCount.value)],
   ];
 
-  const summaryRows = executionSummary.map(([label, value]) => `
+  const buildSummaryRows = (rows: string[][]) => rows.map(([label, value]) => `
       <tr>
         <th>${escapeHtml(label)}</th>
         <td>${escapeHtml(value)}</td>
       </tr>`).join("");
 
-  const executionSections = executionItems.value.map((item, index) => {
+  const resultRows = executionItems.value.map((item, index) => `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(item.definition.name)}</td>
+        <td>${escapeHtml(translateExecutionStatus(getExecutionItemStatus(item)))}</td>
+      </tr>`).join("");
+
+  const failureSections = executionItems.value.map((item, index) => {
     const run = getExecutionRun(item);
-    const logs = getExecutionLogs(item);
-    const logRows = logs.length
-      ? logs.map((log, logIndex) => `
-          <tr>
-            <td>${logIndex + 1}</td>
-            <td>${escapeHtml(log.message)}</td>
-            <td>${escapeHtml(formatTimestamp(log.timestamp))}</td>
-            <td>${escapeHtml(log.level)}</td>
-          </tr>`).join("")
-      : `
-          <tr>
-            <td>1</td>
-            <td>${escapeHtml(getPlaceholderStepMessage(item))}</td>
-            <td>-</td>
-            <td>-</td>
-          </tr>`;
+    const itemStatus = getExecutionItemStatus(item);
+    const failureLogs = getReportFailureLogs(item);
+    if (!failureLogs.length) {
+      return "";
+    }
 
     return `
-      <section class="test-card">
-        <div class="test-card-header">
+      <section class="failure-card">
+        <div class="failure-card-header">
           <div>
-            <h2>${index + 1}. ${escapeHtml(item.definition.name)}</h2>
-            <p class="meta-line">状态：${escapeHtml(translateExecutionStatus(getExecutionItemStatus(item)))}</p>
+            <h3>${index + 1}. ${escapeHtml(item.definition.name)}</h3>
+            <p class="meta-line">结果：${escapeHtml(translateExecutionStatus(itemStatus))}</p>
           </div>
           <div class="meta-grid">
             <span>任务 ID：${escapeHtml(item.runId || "-")}</span>
@@ -514,21 +553,18 @@ function buildExecutionReportHtml(): string {
             <span>耗时：${escapeHtml(formatDuration(run?.durationMs))}</span>
           </div>
         </div>
-
-        <table class="log-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>步骤</th>
-              <th>时间</th>
-              <th>级别</th>
-            </tr>
-          </thead>
-          <tbody>${logRows}
-          </tbody>
-        </table>
+        <div class="failure-detail-grid">
+          <div>
+            <strong>失败步骤</strong>
+            <p>${escapeHtml(getReportFailureStep(item))}</p>
+          </div>
+          <div>
+            <strong>相关日志</strong>
+            <pre>${escapeHtml(formatReportFailureLogs(failureLogs))}</pre>
+          </div>
+        </div>
       </section>`;
-  }).join("");
+  }).filter(Boolean).join("");
 
   const errorSection = executionError.value
     ? `<section class="notice-card error-card"><strong>错误信息：</strong>${escapeHtml(executionError.value)}</section>`
@@ -573,16 +609,21 @@ function buildExecutionReportHtml(): string {
       border-radius: 22px;
       box-shadow: 0 18px 36px rgba(76, 52, 130, 0.08);
     }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
     .hero, .summary-card, .notice-card {
       padding: 24px 28px;
     }
-    .hero h1, .test-card h2 { margin: 0; }
+    .hero h1, .test-card h2, .failure-card h3 { margin: 0; }
     .hero p, .meta-line { margin: 6px 0 0; color: var(--muted); }
-    .summary-table, .log-table {
+    .summary-table {
       width: 100%;
       border-collapse: collapse;
     }
-    .summary-table th, .summary-table td, .log-table th, .log-table td {
+    .summary-table th, .summary-table td {
       padding: 12px 14px;
       border-bottom: 1px solid #eee8fa;
       text-align: left;
@@ -594,14 +635,7 @@ function buildExecutionReportHtml(): string {
       font-weight: 700;
     }
     .test-card {
-      overflow: hidden;
-    }
-    .test-card-header {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 24px 28px 18px;
-      background: linear-gradient(180deg, rgba(239, 231, 255, 0.78), rgba(255, 255, 255, 0.98));
+      padding: 24px 28px;
     }
     .meta-grid {
       display: grid;
@@ -610,14 +644,57 @@ function buildExecutionReportHtml(): string {
       text-align: right;
       white-space: nowrap;
     }
-    .log-table thead {
+    .result-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .result-table th, .result-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #eee8fa;
+      text-align: left;
+      vertical-align: top;
+    }
+    .result-table thead {
       background: var(--paper);
     }
-    .log-table th {
+    .result-table th {
       color: var(--muted);
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.04em;
+    }
+    .failure-card {
+      display: grid;
+      gap: 16px;
+      padding: 24px 28px;
+      border: 1px solid rgba(175, 63, 49, 0.18);
+      border-radius: 22px;
+      background: #fff7f5;
+      box-shadow: 0 18px 36px rgba(76, 52, 130, 0.08);
+    }
+    .failure-card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: start;
+    }
+    .failure-detail-grid {
+      display: grid;
+      gap: 16px;
+    }
+    .failure-card p, .failure-card strong {
+      margin: 0;
+    }
+    .failure-card pre {
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      border-radius: 12px;
+      background: #261f33;
+      color: #f8f4ff;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 12px/1.6 "SFMono-Regular", "Consolas", monospace;
     }
     .error-card {
       border-color: rgba(175, 63, 49, 0.24);
@@ -635,18 +712,43 @@ function buildExecutionReportHtml(): string {
   <main class="report-shell">
     <section class="hero">
       <h1>Z-Wave 自动化测试报告</h1>
-      <p>该报告由测试中心一键导出，包含本次执行的总体结果与分项步骤记录。</p>
+      <p>该报告由测试中心一键导出，顶部展示测试设备与环境信息，下方展示测试项结果列表；如存在失败项，会在末尾附带失败步骤和相关日志。</p>
     </section>
 
-    <section class="summary-card">
-      <table class="summary-table">
-        <tbody>${summaryRows}
+    <div class="summary-grid">
+      <section class="summary-card">
+        <h2>测试设备信息</h2>
+        <table class="summary-table">
+          <tbody>${buildSummaryRows(deviceSummary)}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="summary-card">
+        <h2>环境信息</h2>
+        <table class="summary-table">
+          <tbody>${buildSummaryRows(environmentSummary)}
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    ${errorSection}
+    <section class="test-card">
+      <h2>测试项列表</h2>
+      <table class="result-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>测试项目名称</th>
+            <th>测试结果</th>
+          </tr>
+        </thead>
+        <tbody>${resultRows}
         </tbody>
       </table>
     </section>
-
-    ${errorSection}
-    ${executionSections}
+    ${failureSections}
   </main>
 </body>
 </html>`;
@@ -659,50 +761,47 @@ function buildExecutionReportCsv(): string {
     ["测试节点", selectedNode.value ? `#${selectedNode.value.nodeId} ${describeNode(selectedNode.value)}` : "-"],
     ["设备类型", selectedNode.value?.deviceType || "未识别"],
     ["制造商", selectedNode.value?.manufacturer || "-"],
+    ["产品名称", selectedNode.value?.product || "-"],
     ["总体状态", translateExecutionStatus(overallExecutionStatus.value)],
+    ["Controller 状态", platform.status.phase],
+    ["Controller ID", platform.status.controllerId != undefined ? String(platform.status.controllerId) : "-"],
+    ["Home ID", platform.status.homeId || "-"],
+    ["连接端口", platform.status.connectedPortPath || platform.status.selectedPortPath || "-"],
     ["测试项总数", String(executionItems.value.length)],
     ["已完成", String(completedExecutionCount.value)],
     ["已通过", String(passedExecutionCount.value)],
     [],
-    ["测试项序号", "测试项", "任务 ID", "状态", "开始时间", "结束时间", "耗时", "步骤序号", "步骤内容", "步骤时间", "日志级别"],
+    ["ID", "测试项目名称", "测试结果"],
   ];
 
   executionItems.value.forEach((item, index) => {
+    lines.push([
+      String(index + 1),
+      item.definition.name,
+      translateExecutionStatus(getExecutionItemStatus(item)),
+    ]);
+  });
+
+  const failedItems = executionItems.value.filter((item) => getReportFailureLogs(item).length > 0);
+  if (failedItems.length) {
+    lines.push([]);
+    lines.push(["失败详情"]);
+    lines.push(["ID", "测试项目名称", "任务 ID", "开始时间", "结束时间", "耗时", "失败步骤", "失败日志"]);
+  }
+
+  failedItems.forEach((item, index) => {
     const run = getExecutionRun(item);
-    const logs = getExecutionLogs(item);
-
-    if (!logs.length) {
-      lines.push([
-        String(index + 1),
-        item.definition.name,
-        item.runId || "-",
-        translateExecutionStatus(getExecutionItemStatus(item)),
-        formatTimestamp(run?.startedAt),
-        formatTimestamp(run?.finishedAt),
-        formatDuration(run?.durationMs),
-        "1",
-        getPlaceholderStepMessage(item),
-        "-",
-        "-",
-      ]);
-      return;
-    }
-
-    logs.forEach((log, logIndex) => {
-      lines.push([
-        String(index + 1),
-        item.definition.name,
-        item.runId || "-",
-        translateExecutionStatus(getExecutionItemStatus(item)),
-        formatTimestamp(run?.startedAt),
-        formatTimestamp(run?.finishedAt),
-        formatDuration(run?.durationMs),
-        String(logIndex + 1),
-        log.message,
-        formatTimestamp(log.timestamp),
-        log.level,
-      ]);
-    });
+    const failureLogs = getReportFailureLogs(item);
+    lines.push([
+      String(executionItems.value.indexOf(item) + 1),
+      item.definition.name,
+      item.runId || "-",
+      formatTimestamp(run?.startedAt),
+      formatTimestamp(run?.finishedAt),
+      formatDuration(run?.durationMs),
+      failureLogs.length ? getReportFailureStep(item) : "",
+      failureLogs.length ? formatReportFailureLogs(failureLogs) : "",
+    ]);
   });
 
   return lines
