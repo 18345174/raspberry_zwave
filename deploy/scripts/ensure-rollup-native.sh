@@ -87,64 +87,101 @@ native_package_for_esbuild() {
   esac
 }
 
-ensure_native_dependency() {
-  local package_name=$1
-  local package_dir=$2
-  local package_version=$3
-  local install_root=$4
-  local native_package=$5
-  local native_path="$install_root/node_modules/$native_package"
-
-  if [[ -d "$native_path" ]]; then
-    echo "[native-deps] Found $native_package@$package_version for $package_name in $install_root"
-    return 0
-  fi
-
-  echo "[native-deps] Missing $native_package@$package_version for $package_name in $install_root, installing explicitly..."
-  npm install --prefix "$install_root" --no-save --include=optional "${native_package}@${package_version}"
-
-  if [[ ! -d "$native_path" ]]; then
-    echo "[native-deps] Failed to install $native_package@$package_version for $package_name in $install_root" >&2
-    exit 1
-  fi
-
-  echo "[native-deps] Installed $native_package@$package_version for $package_name in $install_root"
+package_install_root() {
+  local package_json=$1
+  local prefixed_json="./${package_json#./}"
+  printf '%s\n' "${prefixed_json%/node_modules/*/package.json}"
 }
 
-ensure_rollup_native() {
+package_version() {
   local package_json=$1
-  local rollup_dir package_version install_root native_package prefixed_json
+  node -p "require('./${package_json#./}').version"
+}
 
-  rollup_dir=$(dirname "$package_json")
-  package_version=$(node -p "require('./${package_json}').version")
-  prefixed_json="./${package_json#./}"
-  install_root=${prefixed_json%/node_modules/*/package.json}
+is_native_installed() {
+  local install_root=$1
+  local native_package=$2
+  [[ -d "$install_root/node_modules/$native_package" ]]
+}
+
+QUEUE_ROOTS=()
+QUEUE_SPECS=()
+
+queue_install() {
+  local install_root=$1
+  local package_spec=$2
+  local index
+
+  for index in "${!QUEUE_ROOTS[@]}"; do
+    if [[ "${QUEUE_ROOTS[$index]}" == "$install_root" ]]; then
+      case " ${QUEUE_SPECS[$index]} " in
+        *" ${package_spec} "*) return 0 ;;
+      esac
+      QUEUE_SPECS[$index]="${QUEUE_SPECS[$index]} ${package_spec}"
+      return 0
+    fi
+  done
+
+  QUEUE_ROOTS+=("$install_root")
+  QUEUE_SPECS+=("$package_spec")
+}
+
+collect_missing_rollup_native() {
+  local package_json=$1
+  local version install_root native_package
+
   native_package=$(native_package_for_rollup || true)
-
   if [[ -z "${native_package:-}" ]]; then
-    echo "[native-deps] No rollup native package mapping for $PLATFORM/$ARCH, skipping $rollup_dir"
+    echo "[native-deps] No rollup native package mapping for $PLATFORM/$ARCH, skipping $package_json"
     return 0
   fi
 
-  ensure_native_dependency "rollup" "$rollup_dir" "$package_version" "$install_root" "$native_package"
+  version=$(package_version "$package_json")
+  install_root=$(package_install_root "$package_json")
+
+  if is_native_installed "$install_root" "$native_package"; then
+    echo "[native-deps] Found $native_package@$version for rollup in $install_root"
+    return 0
+  fi
+
+  echo "[native-deps] Missing $native_package@$version for rollup in $install_root"
+  queue_install "$install_root" "${native_package}@${version}"
 }
 
-ensure_esbuild_native() {
+collect_missing_esbuild_native() {
   local package_json=$1
-  local esbuild_dir package_version install_root native_package prefixed_json
+  local version install_root native_package
 
-  esbuild_dir=$(dirname "$package_json")
-  package_version=$(node -p "require('./${package_json}').version")
-  prefixed_json="./${package_json#./}"
-  install_root=${prefixed_json%/node_modules/*/package.json}
   native_package=$(native_package_for_esbuild || true)
-
   if [[ -z "${native_package:-}" ]]; then
-    echo "[native-deps] No esbuild native package mapping for $PLATFORM/$ARCH, skipping $esbuild_dir"
+    echo "[native-deps] No esbuild native package mapping for $PLATFORM/$ARCH, skipping $package_json"
     return 0
   fi
 
-  ensure_native_dependency "esbuild" "$esbuild_dir" "$package_version" "$install_root" "$native_package"
+  version=$(package_version "$package_json")
+  install_root=$(package_install_root "$package_json")
+
+  if is_native_installed "$install_root" "$native_package"; then
+    echo "[native-deps] Found $native_package@$version for esbuild in $install_root"
+    return 0
+  fi
+
+  echo "[native-deps] Missing $native_package@$version for esbuild in $install_root"
+  queue_install "$install_root" "${native_package}@${version}"
+}
+
+install_queued_packages() {
+  local index
+
+  for index in "${!QUEUE_ROOTS[@]}"; do
+    echo "[native-deps] Installing missing native packages in ${QUEUE_ROOTS[$index]}: ${QUEUE_SPECS[$index]}"
+    npm install --prefix "${QUEUE_ROOTS[$index]}" --no-save --include=optional ${QUEUE_SPECS[$index]}
+  done
+}
+
+reset_queue() {
+  QUEUE_ROOTS=()
+  QUEUE_SPECS=()
 }
 
 shopt -s nullglob
@@ -159,10 +196,32 @@ fi
 
 for package_json in "${rollup_packages[@]}"; do
   [[ -f "$package_json" ]] || continue
-  ensure_rollup_native "$package_json"
+  collect_missing_rollup_native "$package_json"
 done
 
 for package_json in "${esbuild_packages[@]}"; do
   [[ -f "$package_json" ]] || continue
-  ensure_esbuild_native "$package_json"
+  collect_missing_esbuild_native "$package_json"
 done
+
+if [[ ${#QUEUE_ROOTS[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+install_queued_packages
+reset_queue
+
+for package_json in "${rollup_packages[@]}"; do
+  [[ -f "$package_json" ]] || continue
+  collect_missing_rollup_native "$package_json"
+done
+
+for package_json in "${esbuild_packages[@]}"; do
+  [[ -f "$package_json" ]] || continue
+  collect_missing_esbuild_native "$package_json"
+done
+
+if [[ ${#QUEUE_ROOTS[@]} -gt 0 ]]; then
+  echo "[native-deps] Native dependency verification still reports missing packages after install." >&2
+  exit 1
+fi
