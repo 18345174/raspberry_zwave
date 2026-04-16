@@ -170,12 +170,6 @@ watch(selectedNodeFilter, async () => {
                   报告 ID：{{ report.id }} · 生成时间：{{ formatTimestamp(report.createdAt) }}
                 </p>
               </div>
-              <div class="report-item-side">
-                <span class="status-pill" :data-tone="report.status.includes('通过') ? 'good' : report.status.includes('失败') || report.status.includes('取消') ? 'bad' : undefined">
-                  {{ report.status }}
-                </span>
-                <span class="report-item-meta">来源任务：{{ report.sourceRunIds.length }} 个</span>
-              </div>
             </div>
           </div>
         </article>
@@ -240,12 +234,6 @@ watch(selectedNodeFilter, async () => {
   justify-content: flex-end;
 }
 
-.report-item-side {
-  display: grid;
-  gap: 8px;
-  justify-items: end;
-}
-
 .danger-button {
   color: var(--bad);
   border-color: rgba(165, 58, 44, 0.24);
@@ -257,10 +245,8 @@ watch(selectedNodeFilter, async () => {
     flex-direction: column;
   }
 
-  .report-item-actions,
-  .report-item-side {
+  .report-item-actions {
     justify-content: flex-start;
-    justify-items: start;
   }
 }
 </style>
