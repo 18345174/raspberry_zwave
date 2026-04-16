@@ -70,6 +70,10 @@ export const firmwareStartBodySchema = firmwareFileBodySchema.extend({
   nonSecureTransfer: z.boolean().default(false),
 });
 
+export const renameNodeBodySchema = z.object({
+  name: z.string().trim().min(1),
+});
+
 export const loginBodySchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),

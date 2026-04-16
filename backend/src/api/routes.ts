@@ -9,6 +9,7 @@ import {
   listTestReportsQuerySchema,
   loginBodySchema,
   nodeIdParamSchema,
+  renameNodeBodySchema,
   runTestBodySchema,
   selectPortBodySchema,
   setValueBodySchema,
@@ -149,6 +150,12 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ message: `Node ${nodeId} not found.` });
     }
     return node;
+  });
+
+  app.put("/api/nodes/:nodeId/name", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    const payload = renameNodeBodySchema.parse(request.body ?? {});
+    return await services.nodeRegistry.renameNode(nodeId, payload.name);
   });
 
   app.get("/api/nodes/:nodeId/values", async (request) => {

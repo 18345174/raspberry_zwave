@@ -128,6 +128,12 @@ export const apiClient = {
   getNode(nodeId: number) {
     return request<NodeDetail>(`/api/nodes/${nodeId}`);
   },
+  renameNode(nodeId: number, payload: { name: string }) {
+    return request<NodeDetail>(`/api/nodes/${nodeId}/name`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
   getContactConfig(nodeId: number) {
     return request<{ items: ContactConfigRow[] }>(`/api/nodes/${nodeId}/contact-config`);
   },

@@ -587,6 +587,12 @@ export const usePlatformStore = defineStore("platform", () => {
 
     if (event.type === "zwave.node.updated") {
       const payload = event.payload as NodeDetail;
+      if (latestIncludedNode.value?.nodeId === payload.nodeId) {
+        latestIncludedNode.value = {
+          ...latestIncludedNode.value,
+          name: payload.name ?? payload.product ?? latestIncludedNode.value.name,
+        };
+      }
       if (
         pendingIncludedNode.value &&
         payload.nodeId === pendingIncludedNode.value.nodeId &&
@@ -664,6 +670,29 @@ export const usePlatformStore = defineStore("platform", () => {
 
   async function selectNode(nodeId: number): Promise<void> {
     selectedNode.value = await apiClient.getNode(nodeId);
+  }
+
+  async function renameNode(nodeId: number, name: string): Promise<NodeDetail> {
+    const renamed = await apiClient.renameNode(nodeId, { name });
+
+    nodes.value = nodes.value.map((node) => (
+      node.nodeId === renamed.nodeId
+        ? { ...node, ...renamed }
+        : node
+    ));
+
+    if (selectedNode.value?.nodeId === renamed.nodeId) {
+      selectedNode.value = renamed;
+    }
+
+    if (latestIncludedNode.value?.nodeId === renamed.nodeId) {
+      latestIncludedNode.value = {
+        ...latestIncludedNode.value,
+        name: renamed.name ?? renamed.product ?? latestIncludedNode.value.name,
+      };
+    }
+
+    return renamed;
   }
 
   async function refreshDefinitions(): Promise<void> {
@@ -823,6 +852,7 @@ export const usePlatformStore = defineStore("platform", () => {
     reconnectDriver,
     refreshNodes,
     selectNode,
+    renameNode,
     refreshDefinitions,
     refreshRuns,
     loadRunLogs,

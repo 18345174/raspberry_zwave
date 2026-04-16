@@ -18,12 +18,16 @@ type DialogStep =
 const platform = usePlatformStore();
 const dialogMode = ref<FlowMode>("idle");
 const includeUiStage = ref<"search" | "found" | "grant" | "dsk" | "processing">("search");
+const includeName = ref("");
+const includeNameSaving = ref(false);
+const includeNameError = ref("");
 const form = reactive({
   pin: "",
   grant: [] as string[],
   clientSideAuth: false,
 });
 
+const DEFAULT_INCLUDED_NODE_NAME = "Z-Wave Door Lock";
 const securityOptions = ["S2_AccessControl", "S2_Authenticated", "S2_Unauthenticated", "S0_Legacy"];
 
 const flowLabel = computed(() => {
@@ -199,6 +203,39 @@ watch(
   },
 );
 
+watch(
+  () => platform.latestIncludedNode?.nodeId,
+  (nodeId) => {
+    includeNameSaving.value = false;
+    includeNameError.value = "";
+    if (!nodeId) {
+      includeName.value = "";
+      return;
+    }
+    includeName.value = buildDefaultIncludedNodeName(nodeId);
+  },
+  { immediate: true },
+);
+
+function buildDefaultIncludedNodeName(nodeId: number): string {
+  const existingNames = new Set(
+    platform.nodes
+      .filter((node) => node.nodeId !== nodeId)
+      .map((node) => node.name?.trim())
+      .filter((name): name is string => Boolean(name)),
+  );
+
+  if (!existingNames.has(DEFAULT_INCLUDED_NODE_NAME)) {
+    return DEFAULT_INCLUDED_NODE_NAME;
+  }
+
+  let suffix = 1;
+  while (existingNames.has(`${DEFAULT_INCLUDED_NODE_NAME} ${suffix}`)) {
+    suffix += 1;
+  }
+  return `${DEFAULT_INCLUDED_NODE_NAME} ${suffix}`;
+}
+
 async function beginInclusion(): Promise<void> {
   includeUiStage.value = "search";
   await platform.startInclusion();
@@ -261,10 +298,38 @@ async function stopActiveFlow(): Promise<void> {
 function closeDialog(): void {
   dialogMode.value = "idle";
   includeUiStage.value = "search";
+  includeName.value = "";
+  includeNameSaving.value = false;
+  includeNameError.value = "";
   form.pin = "";
   form.grant = [];
   form.clientSideAuth = false;
   platform.resetProvisioningFlow();
+}
+
+async function saveIncludedNodeName(): Promise<void> {
+  const latestNode = platform.latestIncludedNode;
+  const normalizedName = includeName.value.trim();
+
+  if (!latestNode) {
+    return;
+  }
+  if (!normalizedName) {
+    includeNameError.value = "请输入设备名称。";
+    return;
+  }
+
+  includeNameSaving.value = true;
+  includeNameError.value = "";
+
+  try {
+    await platform.renameNode(latestNode.nodeId, normalizedName);
+    closeDialog();
+  } catch (error) {
+    includeNameError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    includeNameSaving.value = false;
+  }
 }
 </script>
 
@@ -412,7 +477,29 @@ function closeDialog(): void {
         <template v-else-if="dialogStep === 'include-success' && platform.latestIncludedNode">
           <div class="flow-state">
             <p class="flow-lead">添加成功。</p>
-            <p class="flow-copy">节点 {{ platform.latestIncludedNode.nodeId }} {{ platform.latestIncludedNode.name ? `（${platform.latestIncludedNode.name}）` : "" }} 已完成采访，可在节点页面查看详细信息并开始测试。</p>
+            <p class="flow-copy">节点 {{ platform.latestIncludedNode.nodeId }} {{ platform.latestIncludedNode.name ? `（${platform.latestIncludedNode.name}）` : "" }} 已完成采访。请确认设备名称，保存后会同步到设备列表。</p>
+          </div>
+
+          <label class="field-stack">
+            <span>设备名称</span>
+            <input
+              v-model="includeName"
+              class="text-input"
+              placeholder="请输入设备名称"
+              :disabled="includeNameSaving"
+              @keydown.enter.prevent="saveIncludedNodeName"
+            />
+          </label>
+
+          <p v-if="includeNameError" class="inline-error">{{ includeNameError }}</p>
+
+          <div class="button-row">
+            <button class="primary-button" :disabled="includeNameSaving || !includeName.trim()" @click="saveIncludedNodeName">
+              {{ includeNameSaving ? "保存中..." : "保存并关闭" }}
+            </button>
+            <button class="ghost-button" :disabled="includeNameSaving" @click="closeDialog">
+              稍后再说
+            </button>
           </div>
         </template>
 
@@ -433,3 +520,10 @@ function closeDialog(): void {
     </section>
   </div>
 </template>
+
+<style scoped>
+.inline-error {
+  margin: 0;
+  color: var(--bad);
+}
+</style>

@@ -37,6 +37,12 @@ export class NodeRegistryService {
     return this.storage.getNodeSnapshot(nodeId);
   }
 
+  public async renameNode(nodeId: number, name: string): Promise<NodeDetail> {
+    const node = await this.zwaveAdapter.renameNode(nodeId, name);
+    this.storage.upsertNodeSnapshot(node);
+    return node;
+  }
+
   public clearAll(): void {
     this.storage.clearNodeSnapshots();
   }

@@ -482,6 +482,25 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return rows.sort((left, right) => left.parameter - right.parameter);
   }
 
+  public async renameNode(nodeId: number, name: string): Promise<NodeDetail> {
+    this.ensureDriverReady();
+    const node = this.requireNode(nodeId);
+    const normalizedName = name.trim();
+
+    if (!normalizedName) {
+      throw new Error("Node name must not be empty.");
+    }
+
+    node.name = normalizedName;
+    this.log("info", "[node] Node renamed", {
+      nodeId,
+      name: normalizedName,
+    });
+    this.publishNodeUpdated(node);
+
+    return this.toNodeDetail(node);
+  }
+
   public async getFirmwareUpdateCapabilities(nodeId: number): Promise<FirmwareUpdateCapabilities> {
     this.ensureDriverReady();
     const node = this.requireNode(nodeId);

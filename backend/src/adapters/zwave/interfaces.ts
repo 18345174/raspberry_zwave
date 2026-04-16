@@ -31,6 +31,7 @@ export interface IZwaveAdapter {
   validateDsk(requestId: string, pin: string): Promise<void>;
   listNodes(): Promise<NodeSummary[]>;
   getNode(nodeId: number): Promise<NodeDetail>;
+  renameNode(nodeId: number, name: string): Promise<NodeDetail>;
   refreshNode(nodeId: number): Promise<NodeDetail>;
   readSupportedCommandClasses(nodeId: number): Promise<NodeDetail>;
   getContactConfig(nodeId: number): Promise<ContactConfigRow[]>;
