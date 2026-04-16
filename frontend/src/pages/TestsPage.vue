@@ -56,8 +56,12 @@ const USER_CODE_ADD_KEY = "user-code-add";
 const USER_CODE_DEPENDENT_KEYS = new Set(["user-code-edit", "user-code-delete"]);
 const MANUAL_UNLOCK_LOG_STEP_KEYS = new Set(["manual.start", "manual.wait", "manual.confirmed", "manual.done"]);
 const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "edit.fallback", "delete.fallback", "precheck.capabilities"]);
+const controllerReady = computed(() => platform.status.hasReadyDriver && platform.status.phase === "ready");
 
 const runnableNodes = computed(() => {
+  if (!controllerReady.value) {
+    return [];
+  }
   return [...platform.nodes]
     .filter((node) => node.nodeId !== platform.status.controllerId && node.deviceType !== "Controller")
     .sort((left, right) => left.nodeId - right.nodeId);
@@ -851,6 +855,22 @@ watch(
   { immediate: true },
 );
 
+watch(
+  controllerReady,
+  (ready) => {
+    if (ready || executionBusy.value) {
+      return;
+    }
+
+    selectedNodeId.value = null;
+    selectedDefinitionIds.value = [];
+    executionItems.value = [];
+    executionError.value = "";
+    pageStage.value = "devices";
+  },
+  { immediate: true },
+);
+
 async function waitForRunCompletion(runId: string, token: number): Promise<TestRunRecord> {
   while (token === executionToken.value) {
     const liveRun = platform.runs.find((run) => run.id === runId);
@@ -984,11 +1004,12 @@ async function cancelExecution(): Promise<void> {
       </div>
 
       <div v-if="pageStage === 'devices'" class="stage-panel">
-        <p class="panel-intro">进入测试页面后，先从可测试设备中选择目标设备，再进入测试项选择页面。</p>
-        <p v-if="hasBlockingRun" class="warning-banner">当前已有测试任务正在执行，请等待完成后再启动新的测试。</p>
-        <p v-if="loadingDeviceMatrix" class="empty-state">正在加载设备支持的测试项目...</p>
+        <p v-if="controllerReady" class="panel-intro">进入测试页面后，先从可测试设备中选择目标设备，再进入测试项选择页面。</p>
+        <p v-else class="warning-banner">请先连接 Controller，连接成功后才会显示可测试设备。</p>
+        <p v-if="controllerReady && hasBlockingRun" class="warning-banner">当前已有测试任务正在执行，请等待完成后再启动新的测试。</p>
+        <p v-if="controllerReady && loadingDeviceMatrix" class="empty-state">正在加载设备支持的测试项目...</p>
 
-        <div v-else-if="testableDevices.length" class="device-table">
+        <div v-else-if="controllerReady && testableDevices.length" class="device-table">
           <div class="device-table-row device-table-head">
             <span>节点 ID</span>
             <span>名称</span>
@@ -1012,7 +1033,7 @@ async function cancelExecution(): Promise<void> {
           </div>
         </div>
 
-        <p v-else class="empty-state">当前没有可执行自动测试的设备，请先确认设备已完成采访并支持对应命令类。</p>
+        <p v-else-if="controllerReady" class="empty-state">当前没有可执行自动测试的设备，请先确认设备已完成采访并支持对应命令类。</p>
       </div>
 
       <div v-else-if="pageStage === 'definitions' && selectedNode" class="stage-panel stage-panel-definitions">
