@@ -5,6 +5,7 @@ interface ConfigurationProperties {
   maxValue?: number;
   defaultValue?: unknown;
   isReadonly?: boolean;
+  altersCapabilities?: boolean;
   valueSize?: 1 | 2 | 4;
   valueFormat?: number;
 }
@@ -15,6 +16,24 @@ interface WritableConfigCandidate {
   info?: string;
   currentValue: number;
   targetValue: number;
+  properties: ConfigurationProperties;
+}
+
+interface SkippedConfigCandidate {
+  parameter: number;
+  reason: string;
+  currentValue?: unknown;
+  properties?: ConfigurationProperties;
+  error?: string;
+}
+
+interface ParameterTestResult {
+  parameter: number;
+  parameterName?: string;
+  parameterInfo?: string;
+  originalValue: number;
+  testValue: number;
+  restoredValue: number;
   properties: ConfigurationProperties;
 }
 
@@ -34,7 +53,21 @@ function listConfigurationParameters(context: Parameters<ExecutableTestDefinitio
   return [...parameters].sort((left, right) => left - right);
 }
 
-function chooseTargetValue(currentValue: number, minValue: number, maxValue: number): number | undefined {
+function chooseTargetValue(
+  currentValue: number,
+  minValue: number,
+  maxValue: number,
+  defaultValue?: unknown,
+): number | undefined {
+  const normalizedDefaultValue = Number(defaultValue);
+  if (
+    Number.isInteger(normalizedDefaultValue)
+    && normalizedDefaultValue >= minValue
+    && normalizedDefaultValue <= maxValue
+    && normalizedDefaultValue !== currentValue
+  ) {
+    return normalizedDefaultValue;
+  }
   if (currentValue !== minValue) {
     return minValue;
   }
@@ -50,15 +83,20 @@ function chooseTargetValue(currentValue: number, minValue: number, maxValue: num
   return undefined;
 }
 
-async function findWritableCandidate(
+async function findWritableCandidates(
   context: Parameters<ExecutableTestDefinition["run"]>[0],
-): Promise<WritableConfigCandidate> {
+): Promise<{
+  parameters: number[];
+  writable: WritableConfigCandidate[];
+  skipped: SkippedConfigCandidate[];
+}> {
   const parameters = listConfigurationParameters(context);
   if (!parameters.length) {
     throw new Error("节点快照中未发现 Configuration 参数，无法执行参数读写测试。");
   }
 
-  const probeResults: Array<Record<string, unknown>> = [];
+  const writable: WritableConfigCandidate[] = [];
+  const skipped: SkippedConfigCandidate[] = [];
 
   for (const parameter of parameters) {
     try {
@@ -88,49 +126,80 @@ async function findWritableCandidate(
       const currentValue = Number(currentValueRaw);
       const minValue = Number(properties?.minValue);
       const maxValue = Number(properties?.maxValue);
-      const targetValue =
-        Number.isFinite(currentValue) && Number.isFinite(minValue) && Number.isFinite(maxValue)
-          ? chooseTargetValue(currentValue, minValue, maxValue)
-          : undefined;
-
-      probeResults.push({
-        parameter,
-        currentValue: currentValueRaw,
-        properties,
-        name,
-        info,
-      });
 
       if (properties?.isReadonly) {
-        continue;
-      }
-      if (!Number.isFinite(currentValue) || !Number.isInteger(currentValue)) {
-        continue;
-      }
-      if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || minValue > maxValue) {
-        continue;
-      }
-      if (targetValue == undefined) {
+        skipped.push({
+          parameter,
+          reason: "readonly",
+          currentValue: currentValueRaw,
+          properties,
+        });
         continue;
       }
 
-      return {
+      if (properties?.altersCapabilities) {
+        skipped.push({
+          parameter,
+          reason: "alters-capabilities",
+          currentValue: currentValueRaw,
+          properties,
+        });
+        continue;
+      }
+
+      if (!Number.isFinite(currentValue) || !Number.isInteger(currentValue)) {
+        skipped.push({
+          parameter,
+          reason: "invalid-current-value",
+          currentValue: currentValueRaw,
+          properties,
+        });
+        continue;
+      }
+
+      if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || minValue > maxValue) {
+        skipped.push({
+          parameter,
+          reason: "invalid-range",
+          currentValue: currentValueRaw,
+          properties,
+        });
+        continue;
+      }
+
+      const targetValue = chooseTargetValue(currentValue, minValue, maxValue, properties?.defaultValue);
+      if (targetValue == undefined) {
+        skipped.push({
+          parameter,
+          reason: "no-safe-target-value",
+          currentValue: currentValueRaw,
+          properties,
+        });
+        continue;
+      }
+
+      writable.push({
         parameter,
         name: typeof name === "string" ? name : undefined,
         info: typeof info === "string" ? info : undefined,
         currentValue,
         targetValue,
         properties: properties ?? {},
-      };
+      });
     } catch (error) {
-      probeResults.push({
+      skipped.push({
         parameter,
+        reason: "probe-error",
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  throw new Error(`未找到可安全执行写入的 Configuration 参数。探测结果：${JSON.stringify(probeResults)}`);
+  return {
+    parameters,
+    writable,
+    skipped,
+  };
 }
 
 async function setAndVerifyParameter(
@@ -171,16 +240,101 @@ async function setAndVerifyParameter(
   return readBack;
 }
 
+async function restoreParameterBestEffort(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  candidate: WritableConfigCandidate,
+): Promise<void> {
+  try {
+    await context.invokeCcApi({
+      commandClass: "Configuration",
+      method: "set",
+      args: [{
+        parameter: candidate.parameter,
+        value: candidate.currentValue,
+        valueSize: candidate.properties.valueSize,
+        valueFormat: candidate.properties.valueFormat,
+      }],
+    });
+    await context.wait(1000);
+  } catch {
+    // Ignore restore-on-error failures and surface the original error.
+  }
+}
+
+async function testWritableCandidate(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  candidate: WritableConfigCandidate,
+  index: number,
+  total: number,
+): Promise<ParameterTestResult> {
+  await context.log("info", `parameter.${candidate.parameter}.start`, "开始测试 Configuration 参数", {
+    index,
+    total,
+    parameter: candidate.parameter,
+    name: candidate.name,
+    info: candidate.info,
+    from: candidate.currentValue,
+    to: candidate.targetValue,
+  });
+
+  let restoredValue: number | undefined;
+  try {
+    await context.log("info", `parameter.${candidate.parameter}.write.set`, "开始写入 Configuration 参数测试值", {
+      parameter: candidate.parameter,
+      from: candidate.currentValue,
+      to: candidate.targetValue,
+    });
+    const writtenValue = await setAndVerifyParameter(
+      context,
+      candidate,
+      candidate.targetValue,
+      `parameter.${candidate.parameter}.write.verify`,
+    );
+
+    await context.log("info", `parameter.${candidate.parameter}.restore.set`, "开始恢复 Configuration 参数原值", {
+      parameter: candidate.parameter,
+      from: writtenValue,
+      to: candidate.currentValue,
+    });
+    restoredValue = await setAndVerifyParameter(
+      context,
+      candidate,
+      candidate.currentValue,
+      `parameter.${candidate.parameter}.restore.verify`,
+    );
+  } catch (error) {
+    await restoreParameterBestEffort(context, candidate);
+    throw error;
+  }
+
+  await context.log("info", `parameter.${candidate.parameter}.result`, "Configuration 参数测试通过", {
+    index,
+    total,
+    parameter: candidate.parameter,
+    restoredValue,
+  });
+
+  return {
+    parameter: candidate.parameter,
+    parameterName: candidate.name,
+    parameterInfo: candidate.info,
+    originalValue: candidate.currentValue,
+    testValue: candidate.targetValue,
+    restoredValue,
+    properties: candidate.properties,
+  };
+}
+
 export const configurationReadWriteDefinition: ExecutableTestDefinition = {
   traceCommandClasses: ["Configuration"],
   meta: {
-    id: "configuration-read-write-v1",
+    id: "configuration-read-write-v2",
     key: "configuration-read-write",
     name: "Configuration 参数读写测试",
     deviceType: "generic-node",
-    version: 1,
+    version: 2,
     enabled: true,
-    description: "自动选择一个可写 Configuration 参数，执行读取、改写、读回校验，并最终恢复原值。",
+    description: "批量测试所有安全可写的 Configuration 参数，逐个执行读取、改写、读回校验，并最终恢复原值。",
     inputSchema: {},
   },
   supports(node) {
@@ -189,56 +343,44 @@ export const configurationReadWriteDefinition: ExecutableTestDefinition = {
       : { supported: false, reason: "节点未发现 Configuration CC。" };
   },
   async run(context) {
-    await context.log("info", "precheck.start", "开始探测可读写的 Configuration 参数");
-    const candidate = await findWritableCandidate(context);
-    await context.log("info", "precheck.selected", "已选中 Configuration 测试参数", candidate as unknown as Record<string, unknown>);
+    await context.log("info", "precheck.start", "开始探测可批量读写的 Configuration 参数");
+    const discovery = await findWritableCandidates(context);
 
-    let restoredValue: number | undefined;
-    try {
-      await context.log("info", "write.set", "开始写入 Configuration 参数测试值", {
-        parameter: candidate.parameter,
-        from: candidate.currentValue,
-        to: candidate.targetValue,
-      });
-      const writtenValue = await setAndVerifyParameter(context, candidate, candidate.targetValue, "write.verify");
+    await context.log("info", "precheck.summary", "Configuration 参数探测完成", {
+      totalParameters: discovery.parameters.length,
+      writableParameters: discovery.writable.map((candidate) => candidate.parameter),
+      skippedParameters: discovery.skipped,
+    });
 
-      await context.log("info", "restore.set", "开始恢复 Configuration 参数原值", {
-        parameter: candidate.parameter,
-        from: writtenValue,
-        to: candidate.currentValue,
-      });
-      restoredValue = await setAndVerifyParameter(context, candidate, candidate.currentValue, "restore.verify");
-    } catch (error) {
-      try {
-        await context.invokeCcApi({
-          commandClass: "Configuration",
-          method: "set",
-          args: [{
-            parameter: candidate.parameter,
-            value: candidate.currentValue,
-            valueSize: candidate.properties.valueSize,
-            valueFormat: candidate.properties.valueFormat,
-          }],
-        });
-      } catch {
-        // Ignore restore-on-error failures and surface the original error.
-      }
-      throw error;
+    if (!discovery.writable.length) {
+      throw new Error(`未找到可安全执行写入的 Configuration 参数。探测结果：${JSON.stringify(discovery.skipped)}`);
     }
 
-    await context.log("info", "result", "Configuration 参数读写测试通过", {
-      parameter: candidate.parameter,
-      restoredValue,
+    const results: ParameterTestResult[] = [];
+    for (const [index, candidate] of discovery.writable.entries()) {
+      try {
+        const result = await testWritableCandidate(context, candidate, index + 1, discovery.writable.length);
+        results.push(result);
+      } catch (error) {
+        throw new Error(
+          `Configuration 参数 ${candidate.parameter} 批量测试失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    await context.log("info", "result", "Configuration 参数批量读写测试通过", {
+      testedCount: results.length,
+      skippedCount: discovery.skipped.length,
+      testedParameters: results.map((result) => result.parameter),
     });
 
     return {
-      parameter: candidate.parameter,
-      parameterName: candidate.name,
-      parameterInfo: candidate.info,
-      originalValue: candidate.currentValue,
-      testValue: candidate.targetValue,
-      restoredValue,
-      properties: candidate.properties,
+      totalCount: discovery.parameters.length,
+      testedCount: results.length,
+      skippedCount: discovery.skipped.length,
+      testedParameters: results.map((result) => result.parameter),
+      skippedParameters: discovery.skipped,
+      results,
     };
   },
 };
