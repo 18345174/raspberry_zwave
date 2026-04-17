@@ -223,4 +223,10 @@ export const apiClient = {
   cancelRun(runId: string) {
     return request<{ ok: boolean }>(`/api/tests/runs/${runId}/cancel`, { method: "POST" });
   },
+  submitRunManualAction(runId: string, payload: { promptKey: string; action: string }) {
+    return request<{ ok: boolean }>(`/api/tests/runs/${runId}/manual-action`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
 };

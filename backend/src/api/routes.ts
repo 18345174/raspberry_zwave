@@ -326,4 +326,24 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     await services.testEngine.cancelRun(request.params.runId);
     return { ok: true };
   });
+
+  app.post(
+    "/api/tests/runs/:runId/manual-action",
+    async (
+      request: FastifyRequest<{
+        Params: { runId: string };
+        Body: { promptKey?: string; action?: string };
+      }>,
+      reply,
+    ) => {
+      const promptKey = typeof request.body?.promptKey === "string" ? request.body.promptKey.trim() : "";
+      const action = typeof request.body?.action === "string" ? request.body.action.trim() : "";
+      if (!promptKey || !action) {
+        return reply.code(400).send({ message: "promptKey and action are required." });
+      }
+
+      await services.testEngine.submitRunUserAction(request.params.runId, { promptKey, action });
+      return { ok: true };
+    },
+  );
 }

@@ -35,6 +35,12 @@ export interface TestExecutionContext {
     timeoutMs: number;
     predicate?: (payload: Record<string, unknown>) => boolean;
   }): Promise<Record<string, unknown>>;
+  waitForSkippableEvent(match: {
+    type: string;
+    timeoutMs: number;
+    eventPredicate?: (payload: Record<string, unknown>) => boolean;
+    actionPredicate?: (payload: Record<string, unknown>) => boolean;
+  }): Promise<{ kind: "event" | "action"; payload: Record<string, unknown> }>;
   wait(ms: number): Promise<void>;
   isCancelled(): boolean;
 }

@@ -24,9 +24,13 @@ interface DeviceSupportRecord {
 }
 
 interface ManualUnlockPrompt {
+  runId: string;
+  promptKey: string;
   definitionName: string;
   promptMessage: string;
   promptMeta: string;
+  canSkip: boolean;
+  skipButtonLabel?: string;
 }
 
 interface AggregatedStepRecord extends TestLogRecord {
@@ -48,6 +52,7 @@ const loadingDeviceMatrix = ref(false);
 const executionItems = ref<ExecutionItem[]>([]);
 const executionBusy = ref(false);
 const executionError = ref("");
+const manualPromptActionBusy = ref(false);
 const currentExecutionRunId = ref("");
 const executionToken = ref(0);
 const reportActionBusy = ref(false);
@@ -179,6 +184,9 @@ const activeManualUnlockPrompt = computed<ManualUnlockPrompt | null>(() => {
   }
 
   const payload = latestPrompt.payloadJson ?? {};
+  const promptKey = typeof payload.promptKey === "string" && payload.promptKey.trim().length
+    ? payload.promptKey.trim()
+    : latestPrompt.id;
   const promptMessage = typeof payload.promptMessage === "string" && payload.promptMessage.trim().length
     ? payload.promptMessage
     : Number.isInteger(Number(payload.userId)) && Number(payload.userId) > 0
@@ -190,14 +198,18 @@ const activeManualUnlockPrompt = computed<ManualUnlockPrompt | null>(() => {
       ? `第 ${Number(payload.sequence)} / ${Number(payload.totalCount)} 组，检测到预期上报后会自动进入下一组。`
       : "";
 
-  if (!promptMessage) {
+  if (!promptMessage || !promptKey) {
     return null;
   }
 
   return {
+    runId: activeItem.runId,
+    promptKey,
     definitionName: activeItem.definition.name,
     promptMessage,
     promptMeta,
+    canSkip: payload.canSkip === true,
+    skipButtonLabel: typeof payload.skipButtonLabel === "string" ? payload.skipButtonLabel : undefined,
   };
 });
 
@@ -401,7 +413,7 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
       timestamp: latestManualLog?.timestamp ?? new Date().toISOString(),
       level: "info",
       stepKey: "manual.summary",
-      message: "进行随机 User Code 测试",
+      message: latestManualLog?.message ?? "等待人工交互步骤",
     });
   }
 
@@ -1327,6 +1339,24 @@ async function cancelExecution(): Promise<void> {
     currentExecutionRunId.value = "";
   }
 }
+
+async function skipActiveManualPrompt(): Promise<void> {
+  if (!activeManualUnlockPrompt.value || manualPromptActionBusy.value) {
+    return;
+  }
+
+  manualPromptActionBusy.value = true;
+  try {
+    await apiClient.submitRunManualAction(activeManualUnlockPrompt.value.runId, {
+      promptKey: activeManualUnlockPrompt.value.promptKey,
+      action: "skip",
+    });
+  } catch (error) {
+    executionError.value = getErrorMessage(error);
+  } finally {
+    manualPromptActionBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -1442,6 +1472,11 @@ async function cancelExecution(): Promise<void> {
             <h4>{{ activeManualUnlockPrompt.definitionName }}</h4>
             <p class="manual-unlock-message">{{ activeManualUnlockPrompt.promptMessage }}</p>
             <p v-if="activeManualUnlockPrompt.promptMeta" class="manual-unlock-meta">{{ activeManualUnlockPrompt.promptMeta }}</p>
+            <div v-if="activeManualUnlockPrompt.canSkip" class="button-row">
+              <button class="ghost-button" :disabled="manualPromptActionBusy" @click="skipActiveManualPrompt">
+                {{ activeManualUnlockPrompt.skipButtonLabel || "Skip" }}
+              </button>
+            </div>
           </div>
         </div>
 

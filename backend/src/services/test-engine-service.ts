@@ -174,6 +174,26 @@ export class TestEngineService {
     this.cancellationFlags.add(runId);
   }
 
+  public async submitRunUserAction(runId: string, payload: { promptKey: string; action: string }): Promise<void> {
+    const run = this.storage.getTestRun(runId);
+    if (!run) {
+      throw new Error(`Unknown test run: ${runId}`);
+    }
+    if (run.status !== "queued" && run.status !== "running") {
+      throw new Error("The selected test run is not awaiting user interaction.");
+    }
+
+    this.eventBus.publish({
+      type: "test.run.user-action",
+      timestamp: nowIso(),
+      payload: {
+        runId,
+        promptKey: payload.promptKey,
+        action: payload.action,
+      },
+    });
+  }
+
   private async executeRun(runId: string, inputs: Record<string, unknown>, definitionId: string): Promise<void> {
     const definition = executableDefinitions.find((item) => item.meta.id === definitionId);
     const run = this.storage.getTestRun(runId);
@@ -321,6 +341,58 @@ export class TestEngineService {
               }
 
               settle(() => resolve(payload));
+            });
+
+            const timeoutId = setTimeout(() => {
+              settle(() => reject(new Error(`Timeout while waiting for event ${match.type}.`)));
+            }, match.timeoutMs);
+
+            const cancelCheckId = setInterval(() => {
+              if (this.cancellationFlags.has(runId)) {
+                settle(() => reject(new Error(`Test run cancelled while waiting for event ${match.type}.`)));
+              }
+            }, 200);
+          });
+        },
+        waitForSkippableEvent: async (match) => {
+          return await new Promise<{ kind: "event" | "action"; payload: Record<string, unknown> }>((resolve, reject) => {
+            let settled = false;
+
+            const cleanup = (): void => {
+              unsubscribe();
+              clearTimeout(timeoutId);
+              clearInterval(cancelCheckId);
+            };
+
+            const settle = (handler: () => void): void => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              cleanup();
+              handler();
+            };
+
+            const unsubscribe = this.eventBus.subscribe((event) => {
+              if (event.type === match.type && event.payload && typeof event.payload === "object") {
+                const payload = event.payload as Record<string, unknown>;
+                if (match.eventPredicate && !match.eventPredicate(payload)) {
+                  return;
+                }
+                settle(() => resolve({ kind: "event", payload }));
+                return;
+              }
+
+              if (event.type === "test.run.user-action" && event.payload && typeof event.payload === "object") {
+                const payload = event.payload as Record<string, unknown>;
+                if (payload.runId !== runId) {
+                  return;
+                }
+                if (match.actionPredicate && !match.actionPredicate(payload)) {
+                  return;
+                }
+                settle(() => resolve({ kind: "action", payload }));
+              }
             });
 
             const timeoutId = setTimeout(() => {
