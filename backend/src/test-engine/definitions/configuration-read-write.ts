@@ -137,7 +137,7 @@ async function findWritableCandidates(
 }> {
   const parameters = listConfigurationParameters(context);
   if (!parameters.length) {
-    throw new Error("节点快照中未发现 Configuration 参数，无法执行参数读写测试。");
+    throw new Error("当前节点未上报可用的 Configuration 参数信息，暂时无法执行参数读写测试。");
   }
 
   const writable: WritableConfigCandidate[] = [];
@@ -457,7 +457,7 @@ export const configurationReadWriteDefinition: ExecutableTestDefinition = {
   supports(node) {
     return node.commandClasses.includes("Configuration")
       ? { supported: true }
-      : { supported: false, reason: "节点未发现 Configuration CC。" };
+      : { supported: false, reason: "当前节点未上报 Configuration 能力，暂不支持 Configuration 参数读写测试。" };
   },
   async run(context) {
     await context.log("info", "precheck.start", "开始探测可批量读写的 Configuration 参数");
