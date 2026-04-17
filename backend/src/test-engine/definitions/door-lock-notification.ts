@@ -158,8 +158,14 @@ function isAccessControlValueUpdate(
   nodeId: number,
   expectedEvent: number,
 ): boolean {
+  const commandClass = payload.commandClass;
+  const isNotificationCommandClass =
+    commandClass === 113
+    || Number(commandClass) === 113
+    || String(commandClass ?? "") === "Notification";
+
   return Number(payload.nodeId) === nodeId
-    && String(payload.commandClass ?? "") === "Notification"
+    && isNotificationCommandClass
     && String(payload.property ?? "") === "Access Control"
     && Number(payload.newValue) === expectedEvent;
 }
