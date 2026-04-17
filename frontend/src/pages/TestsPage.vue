@@ -26,7 +26,7 @@ interface DeviceSupportRecord {
 interface ManualUnlockPrompt {
   runId: string;
   promptKey: string;
-  definitionName: string;
+  promptTitle: string;
   promptMessage: string;
   promptMeta: string;
   canSkip: boolean;
@@ -187,6 +187,9 @@ const activeManualUnlockPrompt = computed<ManualUnlockPrompt | null>(() => {
   const promptKey = typeof payload.promptKey === "string" && payload.promptKey.trim().length
     ? payload.promptKey.trim()
     : latestPrompt.id;
+  const promptTitle = typeof payload.promptTitle === "string" && payload.promptTitle.trim().length
+    ? payload.promptTitle.trim()
+    : activeItem.definition.name;
   const promptMessage = typeof payload.promptMessage === "string" && payload.promptMessage.trim().length
     ? payload.promptMessage
     : Number.isInteger(Number(payload.userId)) && Number(payload.userId) > 0
@@ -205,7 +208,7 @@ const activeManualUnlockPrompt = computed<ManualUnlockPrompt | null>(() => {
   return {
     runId: activeItem.runId,
     promptKey,
-    definitionName: activeItem.definition.name,
+    promptTitle,
     promptMessage,
     promptMeta,
     canSkip: payload.canSkip === true,
@@ -1469,7 +1472,7 @@ async function skipActiveManualPrompt(): Promise<void> {
         <div v-if="activeManualUnlockPrompt" class="manual-unlock-overlay">
           <div class="manual-unlock-modal">
             <p class="section-kicker">人工验证</p>
-            <h4>{{ activeManualUnlockPrompt.definitionName }}</h4>
+            <h4>{{ activeManualUnlockPrompt.promptTitle }}</h4>
             <p class="manual-unlock-message">{{ activeManualUnlockPrompt.promptMessage }}</p>
             <p v-if="activeManualUnlockPrompt.promptMeta" class="manual-unlock-meta">{{ activeManualUnlockPrompt.promptMeta }}</p>
             <div v-if="activeManualUnlockPrompt.canSkip" class="button-row">

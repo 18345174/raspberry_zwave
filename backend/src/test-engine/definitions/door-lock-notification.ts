@@ -10,7 +10,6 @@ import type { ExecutableTestDefinition, TestExecutionContext } from "../types.js
 
 const ACCESS_CONTROL_NOTIFICATION_TYPE = 6;
 const NOTIFICATION_WAIT_TIMEOUT_MS = 45 * 1000;
-const NOTIFICATION_POLL_INTERVAL_MS = 1000;
 const POST_NOTIFICATION_POLL_DELAY_MS = 2000;
 const USER_CODE_SYNC_DELAY_MS = 1200;
 
@@ -97,10 +96,6 @@ function normalizeReportCode(value: string | Uint8Array | undefined): string | u
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isWaitTimeoutError(error: unknown): boolean {
-  return formatErrorMessage(error).includes("Timeout while waiting for event");
 }
 
 function formatTempUserCode(userId: number): string {
@@ -311,72 +306,6 @@ async function confirmDoorState(
   return status as Record<string, unknown> | undefined;
 }
 
-async function waitForNotificationEventByPolling(
-  context: TestExecutionContext,
-  input: {
-    eventPredicate: (payload: Record<string, unknown>) => boolean;
-    timeoutMs?: number;
-  },
-): Promise<Record<string, unknown>> {
-  const timeoutMs = input.timeoutMs ?? NOTIFICATION_WAIT_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
-
-  while (true) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      break;
-    }
-
-    try {
-      return await context.waitForEvent({
-        type: "zwave.node.notification",
-        timeoutMs: Math.min(remainingMs, NOTIFICATION_POLL_INTERVAL_MS),
-        predicate: input.eventPredicate,
-      });
-    } catch (error) {
-      if (!isWaitTimeoutError(error)) {
-        throw error;
-      }
-    }
-  }
-
-  throw new Error(`等待通知超时（${Math.floor(timeoutMs / 1000)} 秒）。`);
-}
-
-async function waitForSkippableNotificationEventByPolling(
-  context: TestExecutionContext,
-  input: {
-    timeoutMs?: number;
-    eventPredicate: (payload: Record<string, unknown>) => boolean;
-    actionPredicate: (payload: Record<string, unknown>) => boolean;
-  },
-): Promise<{ kind: "event" | "action"; payload: Record<string, unknown> }> {
-  const timeoutMs = input.timeoutMs ?? NOTIFICATION_WAIT_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
-
-  while (true) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      break;
-    }
-
-    try {
-      return await context.waitForSkippableEvent({
-        type: "zwave.node.notification",
-        timeoutMs: Math.min(remainingMs, NOTIFICATION_POLL_INTERVAL_MS),
-        eventPredicate: input.eventPredicate,
-        actionPredicate: input.actionPredicate,
-      });
-    } catch (error) {
-      if (!isWaitTimeoutError(error)) {
-        throw error;
-      }
-    }
-  }
-
-  throw new Error(`等待通知超时（${Math.floor(timeoutMs / 1000)} 秒）。`);
-}
-
 async function executeRfNotificationPhase(
   context: TestExecutionContext,
   input: {
@@ -391,7 +320,6 @@ async function executeRfNotificationPhase(
     expectedEvent: input.expectedEvent,
     expectedEventLabel: describeEvent(input.expectedEvent),
     timeoutMs: NOTIFICATION_WAIT_TIMEOUT_MS,
-    pollIntervalMs: NOTIFICATION_POLL_INTERVAL_MS,
   });
 
   await context.invokeCcApi({
@@ -400,9 +328,10 @@ async function executeRfNotificationPhase(
     args: [input.targetMode],
   });
 
-  const event = await waitForNotificationEventByPolling(context, {
+  const event = await context.waitForEvent({
+    type: "zwave.node.notification",
     timeoutMs: NOTIFICATION_WAIT_TIMEOUT_MS,
-    eventPredicate: (payload) => {
+    predicate: (payload) => {
       if (!isAccessControlNotification(payload, context.node.nodeId)) {
         return false;
       }
@@ -444,11 +373,11 @@ async function executePromptedNotificationPhase(
     expectedEvent: input.expectedEvent,
     expectedEventLabel: describeEvent(input.expectedEvent),
     timeoutMs: input.timeoutMs,
-    pollIntervalMs: NOTIFICATION_POLL_INTERVAL_MS,
   });
 
   await context.log("info", "manual.wait", input.promptMessage, {
     promptKey,
+    promptTitle: `${input.phaseLabel}测试`,
     promptMessage: input.promptMessage,
     promptMeta: input.promptMeta,
     canSkip: true,
@@ -456,7 +385,8 @@ async function executePromptedNotificationPhase(
     phaseKey: input.phaseKey,
   });
 
-  const result = await waitForSkippableNotificationEventByPolling(context, {
+  const result = await context.waitForSkippableEvent({
+    type: "zwave.node.notification",
     timeoutMs: input.timeoutMs,
     eventPredicate: (payload) => {
       if (!isAccessControlNotification(payload, context.node.nodeId)) {
