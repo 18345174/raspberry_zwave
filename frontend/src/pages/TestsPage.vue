@@ -66,9 +66,22 @@ const TEST_DEFINITION_PRIORITY: Record<string, number> = {
 };
 const USER_CODE_ADD_KEY = "user-code-add";
 const USER_CODE_DEPENDENT_KEYS = new Set(["user-code-edit", "user-code-delete"]);
+const DOOR_LOCK_NOTIFICATION_KEY = "door-lock-notification";
 const MANUAL_UNLOCK_LOG_STEP_KEYS = new Set(["manual.start", "manual.wait", "manual.confirmed", "manual.done"]);
 const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "edit.fallback", "delete.fallback", "precheck.capabilities"]);
 const CONFIGURATION_PARAMETER_STEP_KEY_RE = /^parameter\.(\d+)\.(start|write\.set|write\.verify|write\.fallback|restore\.set|restore\.verify|result)$/;
+const DOOR_LOCK_NOTIFICATION_PHASES = [
+  ["precheck", "读取门锁能力"],
+  ["rf.unlock", "RF 解锁测试"],
+  ["rf.lock", "RF 上锁测试"],
+  ["manual.unlock", "手动解锁测试"],
+  ["manual.lock", "手动上锁测试"],
+  ["keypad.unlock", "键盘解锁测试"],
+  ["keypad.lock", "键盘上锁测试"],
+  ["auto-lock", "Auto Lock 测试"],
+  ["jammed", "堵转测试"],
+] as const satisfies ReadonlyArray<readonly [string, string]>;
+const DOOR_LOCK_NOTIFICATION_PHASE_LABELS = Object.fromEntries(DOOR_LOCK_NOTIFICATION_PHASES) as Record<string, string>;
 const controllerReady = computed(() => platform.status.hasReadyDriver && platform.status.phase === "ready");
 
 const runnableNodes = computed(() => {
@@ -358,6 +371,9 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
     return [];
   }
   const sourceLogs = platform.runLogs[item.runId] ?? [];
+  if (item.definition.key === DOOR_LOCK_NOTIFICATION_KEY) {
+    return getDoorLockNotificationLogs(sourceLogs, item.runId);
+  }
   const hasManualUnlockFlow = sourceLogs.some((log) => MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
   const logs = sourceLogs.filter((log) => !HIDDEN_LOG_STEP_KEYS.has(log.stepKey) && !MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
   const collapsedLogs: AggregatedStepRecord[] = [];
@@ -423,6 +439,142 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
   return collapsedLogs;
 }
 
+function resolveDoorLockNotificationPhaseKey(log: TestLogRecord): string | null {
+  if (log.stepKey === "manual.wait" || log.stepKey === "manual.done") {
+    const phaseKey = typeof log.payloadJson?.phaseKey === "string" ? log.payloadJson.phaseKey.trim() : "";
+    return phaseKey || null;
+  }
+
+  if (log.stepKey.startsWith("precheck.")) {
+    return "precheck";
+  }
+  if (log.stepKey.startsWith("rf.unlock.")) {
+    return "rf.unlock";
+  }
+  if (log.stepKey.startsWith("rf.lock.")) {
+    return "rf.lock";
+  }
+  if (log.stepKey.startsWith("manual.unlock.")) {
+    return "manual.unlock";
+  }
+  if (log.stepKey.startsWith("manual.lock.")) {
+    return "manual.lock";
+  }
+  if (log.stepKey.startsWith("keypad.unlock.")) {
+    return "keypad.unlock";
+  }
+  if (log.stepKey.startsWith("keypad.lock.")) {
+    return "keypad.lock";
+  }
+  if (log.stepKey.startsWith("auto-lock.")) {
+    return "auto-lock";
+  }
+  if (log.stepKey.startsWith("jammed.")) {
+    return "jammed";
+  }
+
+  return null;
+}
+
+function getDoorLockNotificationPhaseState(log: TestLogRecord): StepState {
+  if (log.level === "error") {
+    return "failed";
+  }
+  if (log.stepKey === "manual.done" && log.payloadJson?.skipped === true) {
+    return "warn";
+  }
+  if (log.level === "warn" || log.stepKey.endsWith(".skip")) {
+    return "warn";
+  }
+  if (log.stepKey === "precheck.ready" || log.stepKey.endsWith(".result")) {
+    return "passed";
+  }
+  if (
+    log.stepKey === "precheck.start"
+    || log.stepKey === "manual.wait"
+    || log.stepKey === "manual.done"
+    || log.stepKey.endsWith(".prepare")
+    || log.stepKey.endsWith(".start")
+  ) {
+    return "running";
+  }
+  return "pending";
+}
+
+function getDoorLockNotificationPhaseMessage(phaseKey: string, log: TestLogRecord): string {
+  const title = DOOR_LOCK_NOTIFICATION_PHASE_LABELS[phaseKey] ?? log.message;
+
+  if (log.stepKey === "precheck.start") {
+    return "开始读取门锁状态与 Notification 能力";
+  }
+  if (log.stepKey === "precheck.ready") {
+    return "门锁状态与 Notification 能力读取完成";
+  }
+  if (log.stepKey === "manual.wait") {
+    return `${title}：等待人工操作`;
+  }
+  if (log.stepKey === "manual.done") {
+    return log.payloadJson?.skipped === true ? `${title}已跳过` : `${title}操作完成，正在校验结果`;
+  }
+  if (log.stepKey.endsWith(".prepare")) {
+    return `${title}：准备设备状态`;
+  }
+  if (log.stepKey.endsWith(".start")) {
+    return `${title}进行中`;
+  }
+  if (log.stepKey.endsWith(".result")) {
+    return `${title}通过`;
+  }
+
+  return log.message;
+}
+
+function getDoorLockNotificationLogs(sourceLogs: TestLogRecord[], runId: string): TestLogRecord[] {
+  const phaseLogMap = new Map<string, AggregatedStepRecord>();
+
+  for (const log of sourceLogs) {
+    if (log.stepKey === "keypad.setup.skip" || log.stepKey === "keypad.skip") {
+      for (const phaseKey of ["keypad.unlock", "keypad.lock"]) {
+        phaseLogMap.set(phaseKey, {
+          ...log,
+          id: `${runId}-${phaseKey}`,
+          stepKey: "door-lock.phase.summary",
+          message: `${DOOR_LOCK_NOTIFICATION_PHASE_LABELS[phaseKey]}已跳过`,
+          payloadJson: {
+            ...(log.payloadJson ?? {}),
+            aggregatedKind: "door-lock-phase",
+            aggregatedPhaseKey: phaseKey,
+            aggregatedPhaseState: "warn",
+          },
+        });
+      }
+      continue;
+    }
+
+    const phaseKey = resolveDoorLockNotificationPhaseKey(log);
+    if (!phaseKey) {
+      continue;
+    }
+
+    phaseLogMap.set(phaseKey, {
+      ...log,
+      id: `${runId}-${phaseKey}`,
+      stepKey: "door-lock.phase.summary",
+      message: getDoorLockNotificationPhaseMessage(phaseKey, log),
+      payloadJson: {
+        ...(log.payloadJson ?? {}),
+        aggregatedKind: "door-lock-phase",
+        aggregatedPhaseKey: phaseKey,
+        aggregatedPhaseState: getDoorLockNotificationPhaseState(log),
+      },
+    });
+  }
+
+  return DOOR_LOCK_NOTIFICATION_PHASES
+    .map(([phaseKey]) => phaseLogMap.get(phaseKey))
+    .filter((log): log is AggregatedStepRecord => Boolean(log));
+}
+
 function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord[]): StepState {
   const log = logs[index];
   const status = getExecutionItemStatus(item);
@@ -456,6 +608,23 @@ function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord
     if (status === "passed") {
       return "passed";
     }
+  }
+
+  if (log?.stepKey === "door-lock.phase.summary") {
+    const phaseState = log.payloadJson?.aggregatedPhaseState;
+    if (phaseState === "passed" || phaseState === "warn" || phaseState === "failed") {
+      return phaseState;
+    }
+    if (index === logs.length - 1 && (status === "failed" || status === "cancelled")) {
+      return "failed";
+    }
+    if (status === "running" || status === "queued") {
+      return "running";
+    }
+    if (status === "passed") {
+      return "passed";
+    }
+    return "pending";
   }
 
   if (log?.stepKey === "add.progress") {
