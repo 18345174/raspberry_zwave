@@ -41,6 +41,14 @@ export interface TestExecutionContext {
     eventPredicate?: (payload: Record<string, unknown>) => boolean;
     actionPredicate?: (payload: Record<string, unknown>) => boolean;
   }): Promise<{ kind: "event" | "action"; payload: Record<string, unknown> }>;
+  waitForMatchingSignal(match: {
+    timeoutMs: number;
+    events: Array<{
+      type: string;
+      predicate?: (payload: Record<string, unknown>) => boolean;
+    }>;
+    actionPredicate?: (payload: Record<string, unknown>) => boolean;
+  }): Promise<{ kind: "event" | "action"; eventType?: string; payload: Record<string, unknown> }>;
   wait(ms: number): Promise<void>;
   isCancelled(): boolean;
 }

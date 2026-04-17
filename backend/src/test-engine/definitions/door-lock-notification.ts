@@ -53,6 +53,11 @@ interface TemporaryUserCodeReservation {
   previousReport?: UserCodeReport;
 }
 
+interface AccessControlSignalResult {
+  notification: NotificationEventRecord;
+  source: "notification" | "value-update";
+}
+
 function isAccessControlNotification(payload: Record<string, unknown>, nodeId: number): boolean {
   if (Number(payload.nodeId) !== nodeId) {
     return false;
@@ -73,6 +78,25 @@ function extractNotificationRecord(payload: Record<string, unknown>): Notificati
     label: typeof args.label === "string" ? args.label : undefined,
     eventLabel: typeof args.eventLabel === "string" ? args.eventLabel : undefined,
     parameters: (args.parameters ?? {}) as Record<string, unknown>,
+  };
+}
+
+function buildNotificationRecordFromValueUpdate(
+  payload: Record<string, unknown>,
+  expectedEvent: number,
+): NotificationEventRecord {
+  return {
+    type: ACCESS_CONTROL_NOTIFICATION_TYPE,
+    event: expectedEvent,
+    label: "Access Control",
+    eventLabel: describeEvent(expectedEvent),
+    parameters: {
+      source: "zwave.value.updated",
+      property: payload.property,
+      propertyKey: payload.propertyKey,
+      newValue: payload.newValue,
+      prevValue: payload.prevValue,
+    },
   };
 }
 
@@ -127,6 +151,17 @@ function describeEvent(event: number): string {
 
 function expectedModeForBoltStatus(status: "locked" | "unlocked"): DoorLockMode {
   return status === "locked" ? DoorLockMode.Secured : DoorLockMode.Unsecured;
+}
+
+function isAccessControlValueUpdate(
+  payload: Record<string, unknown>,
+  nodeId: number,
+  expectedEvent: number,
+): boolean {
+  return Number(payload.nodeId) === nodeId
+    && String(payload.commandClass ?? "") === "Notification"
+    && String(payload.property ?? "") === "Access Control"
+    && Number(payload.newValue) === expectedEvent;
 }
 
 async function readNotificationSupport(context: TestExecutionContext): Promise<NotificationSupportSummary> {
@@ -306,6 +341,66 @@ async function confirmDoorState(
   return status as Record<string, unknown> | undefined;
 }
 
+async function waitForAccessControlSignal(
+  context: TestExecutionContext,
+  input: {
+    expectedEvent: number;
+    timeoutMs: number;
+    expectedUserId?: number;
+    promptKey?: string;
+  },
+): Promise<AccessControlSignalResult | { skipped: true }> {
+  const result = await context.waitForMatchingSignal({
+    timeoutMs: input.timeoutMs,
+    events: [
+      {
+        type: "zwave.node.notification",
+        predicate: (payload) => {
+          if (!isAccessControlNotification(payload, context.node.nodeId)) {
+            return false;
+          }
+
+          const args = (payload.args ?? {}) as Record<string, unknown>;
+          if (Number(args.event) !== input.expectedEvent) {
+            return false;
+          }
+
+          if (input.expectedUserId == undefined) {
+            return true;
+          }
+
+          const parameters = (args.parameters ?? {}) as Record<string, unknown>;
+          const actualUserId = Number(parameters.userId);
+          return !Number.isFinite(actualUserId) || actualUserId === input.expectedUserId;
+        },
+      },
+      {
+        type: "zwave.value.updated",
+        predicate: (payload) => isAccessControlValueUpdate(payload, context.node.nodeId, input.expectedEvent),
+      },
+    ],
+    actionPredicate: input.promptKey
+      ? (payload) => payload.promptKey === input.promptKey && payload.action === "skip"
+      : undefined,
+  });
+
+  if (result.kind === "action") {
+    return { skipped: true };
+  }
+
+  if (result.eventType === "zwave.value.updated") {
+    return {
+      source: "value-update",
+      notification: buildNotificationRecordFromValueUpdate(result.payload, input.expectedEvent),
+    };
+  }
+
+  return {
+    source: "notification",
+    notification: extractNotificationRecord(result.payload),
+  };
+}
+
 async function executeRfNotificationPhase(
   context: TestExecutionContext,
   input: {
@@ -328,24 +423,20 @@ async function executeRfNotificationPhase(
     args: [input.targetMode],
   });
 
-  const event = await context.waitForEvent({
-    type: "zwave.node.notification",
+  const signal = await waitForAccessControlSignal(context, {
+    expectedEvent: input.expectedEvent,
     timeoutMs: NOTIFICATION_WAIT_TIMEOUT_MS,
-    predicate: (payload) => {
-      if (!isAccessControlNotification(payload, context.node.nodeId)) {
-        return false;
-      }
-      const args = (payload.args ?? {}) as Record<string, unknown>;
-      return Number(args.event) === input.expectedEvent;
-    },
   });
-
-  const notification = extractNotificationRecord(event);
+  if ("skipped" in signal) {
+    throw new Error(`${input.phaseLabel}不应被跳过。`);
+  }
+  const notification = signal.notification;
   const status = await confirmDoorState(context, input);
 
   await context.log("info", `${input.phaseKey}.result`, `${input.phaseLabel}消息验证通过`, {
     notification,
     status,
+    signalSource: signal.source,
   });
 
   return {
@@ -385,31 +476,14 @@ async function executePromptedNotificationPhase(
     phaseKey: input.phaseKey,
   });
 
-  const result = await context.waitForSkippableEvent({
-    type: "zwave.node.notification",
+  const result = await waitForAccessControlSignal(context, {
+    expectedEvent: input.expectedEvent,
     timeoutMs: input.timeoutMs,
-    eventPredicate: (payload) => {
-      if (!isAccessControlNotification(payload, context.node.nodeId)) {
-        return false;
-      }
-
-      const args = (payload.args ?? {}) as Record<string, unknown>;
-      if (Number(args.event) !== input.expectedEvent) {
-        return false;
-      }
-
-      if (input.expectedUserId == undefined) {
-        return true;
-      }
-
-      const parameters = (args.parameters ?? {}) as Record<string, unknown>;
-      const actualUserId = Number(parameters.userId);
-      return !Number.isFinite(actualUserId) || actualUserId === input.expectedUserId;
-    },
-    actionPredicate: (payload) => payload.promptKey === promptKey && payload.action === "skip",
+    expectedUserId: input.expectedUserId,
+    promptKey,
   });
 
-  if (result.kind === "action") {
+  if ("skipped" in result) {
     await context.log("warn", `${input.phaseKey}.skip`, `${input.phaseLabel}消息测试已跳过`, {
       promptKey,
     });
@@ -420,7 +494,7 @@ async function executePromptedNotificationPhase(
     return { skipped: true };
   }
 
-  const notification = extractNotificationRecord(result.payload);
+  const notification = result.notification;
   const status = input.expectedBoltStatus
     ? await confirmDoorState(context, {
       phaseKey: input.phaseKey,
@@ -436,6 +510,7 @@ async function executePromptedNotificationPhase(
   await context.log("info", `${input.phaseKey}.result`, `${input.phaseLabel}消息验证通过`, {
     notification,
     status,
+    signalSource: result.source,
   });
 
   return {

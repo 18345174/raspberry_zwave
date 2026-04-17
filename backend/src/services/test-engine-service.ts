@@ -406,6 +406,65 @@ export class TestEngineService {
             }, 200);
           });
         },
+        waitForMatchingSignal: async (match) => {
+          return await new Promise<{ kind: "event" | "action"; eventType?: string; payload: Record<string, unknown> }>((resolve, reject) => {
+            let settled = false;
+
+            const cleanup = (): void => {
+              unsubscribe();
+              clearTimeout(timeoutId);
+              clearInterval(cancelCheckId);
+            };
+
+            const settle = (handler: () => void): void => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              cleanup();
+              handler();
+            };
+
+            const unsubscribe = this.eventBus.subscribe((event) => {
+              if (event.payload && typeof event.payload === "object") {
+                const payload = event.payload as Record<string, unknown>;
+                const matchedEvent = match.events.find((candidate) => {
+                  if (event.type !== candidate.type) {
+                    return false;
+                  }
+                  return candidate.predicate ? candidate.predicate(payload) : true;
+                });
+
+                if (matchedEvent) {
+                  settle(() => resolve({ kind: "event", eventType: matchedEvent.type, payload }));
+                  return;
+                }
+              }
+
+              if (event.type === "test.run.user-action" && event.payload && typeof event.payload === "object") {
+                const payload = event.payload as Record<string, unknown>;
+                if (payload.runId !== runId) {
+                  return;
+                }
+                if (match.actionPredicate && !match.actionPredicate(payload)) {
+                  return;
+                }
+                settle(() => resolve({ kind: "action", payload }));
+              }
+            });
+
+            const timeoutId = setTimeout(() => {
+              const eventTypes = match.events.map((event) => event.type).join(", ");
+              settle(() => reject(new Error(`Timeout while waiting for signal ${eventTypes}.`)));
+            }, match.timeoutMs);
+
+            const cancelCheckId = setInterval(() => {
+              if (this.cancellationFlags.has(runId)) {
+                settle(() => reject(new Error("Test run cancelled while waiting for signal.")));
+              }
+            }, 200);
+          });
+        },
         wait: async (ms) => {
           await new Promise((resolve) => setTimeout(resolve, ms));
         },
