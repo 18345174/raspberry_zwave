@@ -16,6 +16,7 @@ interface WritableConfigCandidate {
   info?: string;
   currentValue: number;
   targetValue: number;
+  fallbackTargetValue?: number;
   properties: ConfigurationProperties;
 }
 
@@ -62,25 +63,15 @@ function chooseTargetValue(
   currentValue: number,
   minValue: number,
   maxValue: number,
-  defaultValue?: unknown,
 ): number | undefined {
-  const normalizedDefaultValue = Number(defaultValue);
-  if (
-    Number.isInteger(normalizedDefaultValue)
-    && normalizedDefaultValue >= minValue
-    && normalizedDefaultValue <= maxValue
-    && normalizedDefaultValue !== currentValue
-  ) {
-    return normalizedDefaultValue;
+  if (currentValue !== maxValue) {
+    return maxValue;
   }
   if (currentValue !== 1 && 1 >= minValue && 1 <= maxValue) {
     return 1;
   }
   if (currentValue !== minValue) {
     return minValue;
-  }
-  if (currentValue !== maxValue) {
-    return maxValue;
   }
   if (currentValue + 1 <= maxValue) {
     return currentValue + 1;
@@ -89,6 +80,29 @@ function chooseTargetValue(
     return currentValue - 1;
   }
   return undefined;
+}
+
+function chooseFallbackTargetValue(
+  currentValue: number,
+  minValue: number,
+  maxValue: number,
+  primaryTargetValue: number,
+): number | undefined {
+  if (primaryTargetValue !== 1 && currentValue !== 1 && 1 >= minValue && 1 <= maxValue) {
+    return 1;
+  }
+  return undefined;
+}
+
+class ConfigurationReadBackMismatchError extends Error {
+  public constructor(
+    public readonly parameter: number,
+    public readonly expectedValue: number,
+    public readonly readBackRaw: unknown,
+  ) {
+    super(`参数 ${parameter} 写入 ${expectedValue} 后读回为 ${String(readBackRaw)}。`);
+    this.name = "ConfigurationReadBackMismatchError";
+  }
 }
 
 async function findWritableCandidates(
@@ -175,7 +189,7 @@ async function findWritableCandidates(
         continue;
       }
 
-      const targetValue = chooseTargetValue(currentValue, minValue, maxValue, properties?.defaultValue);
+      const targetValue = chooseTargetValue(currentValue, minValue, maxValue);
       if (targetValue == undefined) {
         skipped.push({
           parameter,
@@ -192,6 +206,7 @@ async function findWritableCandidates(
         info: typeof info === "string" ? info : undefined,
         currentValue,
         targetValue,
+        fallbackTargetValue: chooseFallbackTargetValue(currentValue, minValue, maxValue, targetValue),
         properties: properties ?? {},
       });
     } catch (error) {
@@ -249,7 +264,7 @@ async function setAndVerifyParameter(
   );
 
   if (readBack !== targetValue) {
-    throw new Error(`参数 ${candidate.parameter} 写入 ${targetValue} 后读回为 ${String(readBackRaw)}。`);
+    throw new ConfigurationReadBackMismatchError(candidate.parameter, targetValue, readBackRaw);
   }
 
   return readBack;
@@ -283,6 +298,7 @@ async function testWritableCandidate(
   total: number,
 ): Promise<ParameterTestResult> {
   const parameterLabel = describeParameter(candidate.parameter, candidate.name, candidate.info);
+  let effectiveTargetValue = candidate.targetValue;
 
   await context.log("info", `parameter.${candidate.parameter}.start`, `开始测试 ${parameterLabel}`, {
     index,
@@ -292,6 +308,7 @@ async function testWritableCandidate(
     info: candidate.info,
     from: candidate.currentValue,
     to: candidate.targetValue,
+    fallbackTo: candidate.fallbackTargetValue,
   });
 
   let restoredValue: number | undefined;
@@ -299,21 +316,65 @@ async function testWritableCandidate(
     await context.log(
       "info",
       `parameter.${candidate.parameter}.write.set`,
-      `${parameterLabel} 开始写入测试值（${candidate.currentValue} -> ${candidate.targetValue}）`,
+      `${parameterLabel} 开始写入测试值（${candidate.currentValue} -> ${effectiveTargetValue}）`,
       {
       parameter: candidate.parameter,
       parameterName: candidate.name,
       parameterInfo: candidate.info,
       from: candidate.currentValue,
-      to: candidate.targetValue,
+      to: effectiveTargetValue,
       },
     );
-    const writtenValue = await setAndVerifyParameter(
-      context,
-      candidate,
-      candidate.targetValue,
-      `parameter.${candidate.parameter}.write.verify`,
-    );
+    let writtenValue: number;
+    try {
+      writtenValue = await setAndVerifyParameter(
+        context,
+        candidate,
+        effectiveTargetValue,
+        `parameter.${candidate.parameter}.write.verify`,
+      );
+    } catch (error) {
+      if (
+        error instanceof ConfigurationReadBackMismatchError
+        && candidate.fallbackTargetValue != undefined
+        && candidate.fallbackTargetValue !== effectiveTargetValue
+      ) {
+        effectiveTargetValue = candidate.fallbackTargetValue;
+        await context.log(
+          "warn",
+          `parameter.${candidate.parameter}.write.fallback`,
+          `${parameterLabel} 写入最大值失败，改为尝试写入 ${effectiveTargetValue}`,
+          {
+            parameter: candidate.parameter,
+            parameterName: candidate.name,
+            parameterInfo: candidate.info,
+            failedExpectedValue: error.expectedValue,
+            failedReadBackValue: error.readBackRaw,
+            retryTargetValue: effectiveTargetValue,
+          },
+        );
+        await context.log(
+          "info",
+          `parameter.${candidate.parameter}.write.set`,
+          `${parameterLabel} 开始写入测试值（${candidate.currentValue} -> ${effectiveTargetValue}）`,
+          {
+            parameter: candidate.parameter,
+            parameterName: candidate.name,
+            parameterInfo: candidate.info,
+            from: candidate.currentValue,
+            to: effectiveTargetValue,
+          },
+        );
+        writtenValue = await setAndVerifyParameter(
+          context,
+          candidate,
+          effectiveTargetValue,
+          `parameter.${candidate.parameter}.write.verify`,
+        );
+      } else {
+        throw error;
+      }
+    }
 
     await context.log(
       "info",
@@ -352,7 +413,7 @@ async function testWritableCandidate(
     parameterName: candidate.name,
     parameterInfo: candidate.info,
     originalValue: candidate.currentValue,
-    testValue: candidate.targetValue,
+    testValue: effectiveTargetValue,
     restoredValue,
     properties: candidate.properties,
   };

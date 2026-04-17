@@ -63,7 +63,7 @@ const USER_CODE_ADD_KEY = "user-code-add";
 const USER_CODE_DEPENDENT_KEYS = new Set(["user-code-edit", "user-code-delete"]);
 const MANUAL_UNLOCK_LOG_STEP_KEYS = new Set(["manual.start", "manual.wait", "manual.confirmed", "manual.done"]);
 const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "edit.fallback", "delete.fallback", "precheck.capabilities"]);
-const CONFIGURATION_PARAMETER_STEP_KEY_RE = /^parameter\.(\d+)\.(start|write\.set|write\.verify|restore\.set|restore\.verify|result)$/;
+const CONFIGURATION_PARAMETER_STEP_KEY_RE = /^parameter\.(\d+)\.(start|write\.set|write\.verify|write\.fallback|restore\.set|restore\.verify|result)$/;
 const controllerReady = computed(() => platform.status.hasReadyDriver && platform.status.phase === "ready");
 
 const runnableNodes = computed(() => {
@@ -469,11 +469,15 @@ function getConfigurationStageMessage(label: string, stage: string, log: TestLog
   const to = typeof log.payloadJson?.to === "number" ? log.payloadJson.to : undefined;
   const expectedValue = typeof log.payloadJson?.expectedValue === "number" ? log.payloadJson.expectedValue : undefined;
   const readBack = typeof log.payloadJson?.readBack === "number" ? log.payloadJson.readBack : undefined;
+  const retryTargetValue = typeof log.payloadJson?.retryTargetValue === "number" ? log.payloadJson.retryTargetValue : undefined;
 
   if (stage === "result") {
     return `${label} 测试通过`;
   }
   if (stage.startsWith("write")) {
+    if (stage === "write.fallback" && retryTargetValue != undefined) {
+      return `${label} 写入最大值失败，改为写入 ${retryTargetValue}`;
+    }
     if (stage === "write.set" && from != undefined && to != undefined) {
       return `${label} 写入测试值（${from} -> ${to}）`;
     }
