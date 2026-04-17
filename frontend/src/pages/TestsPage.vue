@@ -29,6 +29,13 @@ interface ManualUnlockPrompt {
   promptMeta: string;
 }
 
+interface AggregatedStepRecord extends TestLogRecord {
+  payloadJson?: Record<string, unknown> & {
+    aggregatedKind?: string;
+    aggregatedStage?: string;
+  };
+}
+
 const TERMINAL_STATUSES = new Set<TestRunRecord["status"]>(["passed", "failed", "cancelled"]);
 
 const platform = usePlatformStore();
@@ -56,6 +63,7 @@ const USER_CODE_ADD_KEY = "user-code-add";
 const USER_CODE_DEPENDENT_KEYS = new Set(["user-code-edit", "user-code-delete"]);
 const MANUAL_UNLOCK_LOG_STEP_KEYS = new Set(["manual.start", "manual.wait", "manual.confirmed", "manual.done"]);
 const HIDDEN_LOG_STEP_KEYS = new Set(["add.fallback", "edit.fallback", "delete.fallback", "precheck.capabilities"]);
+const CONFIGURATION_PARAMETER_STEP_KEY_RE = /^parameter\.(\d+)\.(start|write\.set|write\.verify|restore\.set|restore\.verify|result)$/;
 const controllerReady = computed(() => platform.status.hasReadyDriver && platform.status.phase === "ready");
 
 const runnableNodes = computed(() => {
@@ -337,10 +345,39 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
   const sourceLogs = platform.runLogs[item.runId] ?? [];
   const hasManualUnlockFlow = sourceLogs.some((log) => MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
   const logs = sourceLogs.filter((log) => !HIDDEN_LOG_STEP_KEYS.has(log.stepKey) && !MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
-  const collapsedLogs: TestLogRecord[] = [];
+  const collapsedLogs: AggregatedStepRecord[] = [];
   const progressLogIndexes = new Map<string, number>();
+  const configurationLogIndexes = new Map<number, number>();
 
   for (const log of logs) {
+    const configurationMatch = log.stepKey.match(CONFIGURATION_PARAMETER_STEP_KEY_RE);
+    if (configurationMatch) {
+      const parameter = Number(configurationMatch[1]);
+      const stage = configurationMatch[2];
+      const existingIndex = configurationLogIndexes.get(parameter);
+      const label = getConfigurationParameterLabel(log, parameter);
+      const aggregatedLog: AggregatedStepRecord = {
+        ...log,
+        stepKey: "configuration.parameter.summary",
+        message: getConfigurationStageMessage(label, stage),
+        payloadJson: {
+          ...(log.payloadJson ?? {}),
+          aggregatedKind: "configuration-parameter",
+          aggregatedStage: stage,
+          parameter,
+          label,
+        },
+      };
+
+      if (existingIndex == undefined) {
+        configurationLogIndexes.set(parameter, collapsedLogs.length);
+        collapsedLogs.push(aggregatedLog);
+      } else {
+        collapsedLogs[existingIndex] = aggregatedLog;
+      }
+      continue;
+    }
+
     if (!log.stepKey.endsWith(".progress")) {
       collapsedLogs.push(log);
       continue;
@@ -373,12 +410,24 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
 
 function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord[]): StepState {
   const log = logs[index];
+  const status = getExecutionItemStatus(item);
+
   if (log?.level === "error") {
     return "failed";
   }
 
+  if (log?.stepKey === "configuration.parameter.summary") {
+    const stage = typeof log.payloadJson?.aggregatedStage === "string" ? log.payloadJson.aggregatedStage : "";
+    if (status === "failed" || status === "cancelled") {
+      return stage === "result" ? "passed" : "failed";
+    }
+    if (status === "running" || status === "queued") {
+      return stage === "result" ? "passed" : "running";
+    }
+    return stage === "result" ? "passed" : "pending";
+  }
+
   if (log?.stepKey === "manual.summary") {
-    const status = getExecutionItemStatus(item);
     if (status === "failed" || status === "cancelled") {
       return "failed";
     }
@@ -391,19 +440,41 @@ function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord
   }
 
   if (log?.stepKey === "add.progress") {
-    const status = getExecutionItemStatus(item);
     if (status === "running" || status === "queued") {
       return "running";
     }
   }
 
+  if (index === logs.length - 1 && (status === "failed" || status === "cancelled")) {
+    return "failed";
+  }
+
   if (index === logs.length - 1) {
-    const status = getExecutionItemStatus(item);
     if (status === "running" || status === "queued") {
       return "running";
     }
   }
   return "passed";
+}
+
+function getConfigurationParameterLabel(log: TestLogRecord, parameter: number): string {
+  const payloadName = typeof log.payloadJson?.parameterName === "string" ? log.payloadJson.parameterName.trim() : "";
+  const payloadInfo = typeof log.payloadJson?.parameterInfo === "string" ? log.payloadJson.parameterInfo.trim() : "";
+  const label = payloadName || payloadInfo;
+  return label ? `Configuration 参数 ${parameter}（${label}）` : `Configuration 参数 ${parameter}`;
+}
+
+function getConfigurationStageMessage(label: string, stage: string): string {
+  if (stage === "result") {
+    return `${label} 测试通过`;
+  }
+  if (stage.startsWith("write")) {
+    return `${label} 写入测试值`;
+  }
+  if (stage.startsWith("restore")) {
+    return `${label} 恢复原值`;
+  }
+  return `开始测试 ${label}`;
 }
 
 function getPlaceholderStepState(item: ExecutionItem): StepState {

@@ -37,6 +37,11 @@ interface ParameterTestResult {
   properties: ConfigurationProperties;
 }
 
+function describeParameter(parameter: number, name?: string, info?: string): string {
+  const label = name?.trim() || info?.trim();
+  return label ? `Configuration 参数 ${parameter}（${label}）` : `Configuration 参数 ${parameter}`;
+}
+
 function listConfigurationParameters(context: Parameters<ExecutableTestDefinition["run"]>[0]): number[] {
   const parameters = new Set<number>();
 
@@ -227,8 +232,10 @@ async function setAndVerifyParameter(
   });
   const readBack = Number(readBackRaw);
 
-  await context.log("info", stepKey, "Configuration 参数读回完成", {
+  await context.log("info", stepKey, `${describeParameter(candidate.parameter, candidate.name, candidate.info)} 读回完成`, {
     parameter: candidate.parameter,
+    parameterName: candidate.name,
+    parameterInfo: candidate.info,
     expectedValue: targetValue,
     readBack,
   });
@@ -267,7 +274,9 @@ async function testWritableCandidate(
   index: number,
   total: number,
 ): Promise<ParameterTestResult> {
-  await context.log("info", `parameter.${candidate.parameter}.start`, "开始测试 Configuration 参数", {
+  const parameterLabel = describeParameter(candidate.parameter, candidate.name, candidate.info);
+
+  await context.log("info", `parameter.${candidate.parameter}.start`, `开始测试 ${parameterLabel}`, {
     index,
     total,
     parameter: candidate.parameter,
@@ -279,8 +288,10 @@ async function testWritableCandidate(
 
   let restoredValue: number | undefined;
   try {
-    await context.log("info", `parameter.${candidate.parameter}.write.set`, "开始写入 Configuration 参数测试值", {
+    await context.log("info", `parameter.${candidate.parameter}.write.set`, `${parameterLabel} 开始写入测试值`, {
       parameter: candidate.parameter,
+      parameterName: candidate.name,
+      parameterInfo: candidate.info,
       from: candidate.currentValue,
       to: candidate.targetValue,
     });
@@ -291,8 +302,10 @@ async function testWritableCandidate(
       `parameter.${candidate.parameter}.write.verify`,
     );
 
-    await context.log("info", `parameter.${candidate.parameter}.restore.set`, "开始恢复 Configuration 参数原值", {
+    await context.log("info", `parameter.${candidate.parameter}.restore.set`, `${parameterLabel} 开始恢复原值`, {
       parameter: candidate.parameter,
+      parameterName: candidate.name,
+      parameterInfo: candidate.info,
       from: writtenValue,
       to: candidate.currentValue,
     });
@@ -307,10 +320,12 @@ async function testWritableCandidate(
     throw error;
   }
 
-  await context.log("info", `parameter.${candidate.parameter}.result`, "Configuration 参数测试通过", {
+  await context.log("info", `parameter.${candidate.parameter}.result`, `${parameterLabel} 测试通过`, {
     index,
     total,
     parameter: candidate.parameter,
+    parameterName: candidate.name,
+    parameterInfo: candidate.info,
     restoredValue,
   });
 
@@ -348,7 +363,10 @@ export const configurationReadWriteDefinition: ExecutableTestDefinition = {
 
     await context.log("info", "precheck.summary", "Configuration 参数探测完成", {
       totalParameters: discovery.parameters.length,
-      writableParameters: discovery.writable.map((candidate) => candidate.parameter),
+      writableParameters: discovery.writable.map((candidate) => ({
+        parameter: candidate.parameter,
+        label: describeParameter(candidate.parameter, candidate.name, candidate.info),
+      })),
       skippedParameters: discovery.skipped,
     });
 
@@ -371,7 +389,10 @@ export const configurationReadWriteDefinition: ExecutableTestDefinition = {
     await context.log("info", "result", "Configuration 参数批量读写测试通过", {
       testedCount: results.length,
       skippedCount: discovery.skipped.length,
-      testedParameters: results.map((result) => result.parameter),
+      testedParameters: results.map((result) => ({
+        parameter: result.parameter,
+        label: describeParameter(result.parameter, result.parameterName, result.parameterInfo),
+      })),
     });
 
     return {
