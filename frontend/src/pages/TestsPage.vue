@@ -8,7 +8,8 @@ import { downloadTextFile, downloadXlsxFromCsv } from "../utils/report-files";
 import { translateRunStatus } from "../utils/ui-text";
 
 type TestPageStage = "devices" | "definitions" | "execution";
-type ExecutionStatus = TestRunRecord["status"] | "pending";
+type LocalExecutionStatus = "pending" | "submitting" | "blocked";
+type ExecutionStatus = TestRunRecord["status"] | LocalExecutionStatus;
 type StepState = "pending" | "running" | "passed" | "failed" | "warn";
 
 interface ExecutionItem {
@@ -16,6 +17,8 @@ interface ExecutionItem {
   runId?: string;
   status: ExecutionStatus;
   expanded: boolean;
+  submissionError?: string;
+  blockedReason?: string;
 }
 
 interface DeviceSupportRecord {
@@ -41,6 +44,8 @@ interface AggregatedStepRecord extends TestLogRecord {
 }
 
 const TERMINAL_STATUSES = new Set<TestRunRecord["status"]>(["passed", "failed", "cancelled"]);
+const COMPLETED_EXECUTION_STATUSES = new Set<ExecutionStatus>(["passed", "failed", "cancelled", "blocked"]);
+const ACTIVE_EXECUTION_STATUSES = new Set<ExecutionStatus>(["submitting", "queued", "running"]);
 
 const platform = usePlatformStore();
 
@@ -122,7 +127,7 @@ const testableDevices = computed<DeviceSupportRecord[]>(() => {
 });
 
 const completedExecutionCount = computed(() => {
-  return executionItems.value.filter((item) => TERMINAL_STATUSES.has(getExecutionItemStatus(item) as TestRunRecord["status"])).length;
+  return executionItems.value.filter((item) => COMPLETED_EXECUTION_STATUSES.has(getExecutionItemStatus(item))).length;
 });
 
 const passedExecutionCount = computed(() => {
@@ -148,10 +153,7 @@ const overallExecutionStatus = computed<ExecutionStatus>(() => {
   if (!executionItems.value.length) {
     return "pending";
   }
-  if (executionBusy.value || executionItems.value.some((item) => {
-    const status = getExecutionItemStatus(item);
-    return status === "queued" || status === "running";
-  })) {
+  if (executionBusy.value || executionItems.value.some((item) => ACTIVE_EXECUTION_STATUSES.has(getExecutionItemStatus(item)))) {
     return "running";
   }
   if (executionItems.value.some((item) => getExecutionItemStatus(item) === "failed")) {
@@ -159,6 +161,9 @@ const overallExecutionStatus = computed<ExecutionStatus>(() => {
   }
   if (executionItems.value.some((item) => getExecutionItemStatus(item) === "cancelled")) {
     return "cancelled";
+  }
+  if (executionItems.value.some((item) => getExecutionItemStatus(item) === "blocked")) {
+    return "failed";
   }
   if (executionItems.value.every((item) => getExecutionItemStatus(item) === "passed")) {
     return "passed";
@@ -348,7 +353,26 @@ function translateExecutionStatus(status: ExecutionStatus): string {
   if (status === "pending") {
     return "待执行";
   }
+  if (status === "submitting") {
+    return "下发中";
+  }
+  if (status === "blocked") {
+    return "未执行";
+  }
   return translateRunStatus(status);
+}
+
+function getExecutionStatusTone(status: ExecutionStatus): "good" | "bad" | "warn" | undefined {
+  if (status === "passed") {
+    return "good";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "bad";
+  }
+  if (status === "submitting" || status === "queued" || status === "running" || status === "blocked") {
+    return "warn";
+  }
+  return undefined;
 }
 
 function getExecutionItemStatus(item: ExecutionItem): ExecutionStatus {
@@ -366,13 +390,48 @@ function getExecutionRun(item: ExecutionItem): TestRunRecord | undefined {
   return platform.runs.find((run) => run.id === item.runId);
 }
 
+function appendExecutionSummaryLog(item: ExecutionItem, logs: TestLogRecord[]): TestLogRecord[] {
+  const status = getExecutionItemStatus(item);
+  if (status !== "failed" && status !== "cancelled" && status !== "blocked") {
+    return logs;
+  }
+
+  const lastLog = logs.at(-1);
+  if (!lastLog || lastLog.level === "error" || lastLog.stepKey === "execution.summary") {
+    return logs;
+  }
+
+  const run = getExecutionRun(item);
+  let message = "测试失败，请结合上方步骤与后端日志排查。";
+  let level: TestLogRecord["level"] = "error";
+
+  if (status === "cancelled") {
+    message = "测试已取消。";
+  } else if (status === "blocked") {
+    level = "warn";
+    message = item.blockedReason ?? "本项未提交到后端执行。";
+  } else if (!item.runId && item.submissionError) {
+    message = `创建测试任务失败：${item.submissionError}`;
+  }
+
+  return [...logs, {
+    id: `${item.runId ?? item.definition.id}-execution.summary`,
+    testRunId: item.runId ?? "",
+    timestamp: run?.finishedAt ?? lastLog.timestamp,
+    level,
+    stepKey: "execution.summary",
+    message,
+    payloadJson: { status },
+  }];
+}
+
 function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
   if (!item.runId) {
     return [];
   }
   const sourceLogs = platform.runLogs[item.runId] ?? [];
   if (item.definition.key === DOOR_LOCK_NOTIFICATION_KEY) {
-    return getDoorLockNotificationLogs(sourceLogs, item.runId);
+    return appendExecutionSummaryLog(item, getDoorLockNotificationLogs(sourceLogs, item.runId));
   }
   const hasManualUnlockFlow = sourceLogs.some((log) => MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
   const logs = sourceLogs.filter((log) => !HIDDEN_LOG_STEP_KEYS.has(log.stepKey) && !MANUAL_UNLOCK_LOG_STEP_KEYS.has(log.stepKey));
@@ -436,7 +495,7 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
     });
   }
 
-  return collapsedLogs;
+  return appendExecutionSummaryLog(item, collapsedLogs);
 }
 
 function resolveDoorLockNotificationPhaseKey(log: TestLogRecord): string | null {
@@ -691,7 +750,10 @@ function getPlaceholderStepState(item: ExecutionItem): StepState {
   if (status === "failed" || status === "cancelled") {
     return "failed";
   }
-  if (status === "running" || status === "queued") {
+  if (status === "blocked") {
+    return "warn";
+  }
+  if (status === "submitting" || status === "running" || status === "queued") {
     return "running";
   }
   return "pending";
@@ -700,7 +762,10 @@ function getPlaceholderStepState(item: ExecutionItem): StepState {
 function getPlaceholderStepMessage(item: ExecutionItem): string {
   const status = getExecutionItemStatus(item);
   if (status === "pending") {
-    return "等待开始执行";
+    return "等待前序测试完成后提交到后端";
+  }
+  if (status === "submitting") {
+    return "正在向后端创建测试任务";
   }
   if (status === "queued") {
     return "任务已创建，等待后端开始执行";
@@ -708,10 +773,16 @@ function getPlaceholderStepMessage(item: ExecutionItem): string {
   if (status === "running") {
     return "正在执行，请稍候...";
   }
+  if (status === "blocked") {
+    return item.blockedReason ? `未提交到后端：${item.blockedReason}` : "本项未提交到后端执行";
+  }
   if (status === "cancelled") {
     return "测试已取消";
   }
   if (status === "failed") {
+    if (!item.runId && item.submissionError) {
+      return `创建测试任务失败：${item.submissionError}`;
+    }
     return "测试失败，等待日志同步";
   }
   return "测试完成";
@@ -742,7 +813,7 @@ function buildExecutionReportBaseName(reportId?: string): string {
 
 function getReportFailureLogs(item: ExecutionItem): TestLogRecord[] {
   const status = getExecutionItemStatus(item);
-  if (status !== "failed" && status !== "cancelled") {
+  if (status !== "failed" && status !== "cancelled" && status !== "blocked") {
     return [];
   }
 
@@ -785,10 +856,24 @@ function getReportStatusTone(status: ExecutionStatus): "passed" | "failed" | "ca
   if (status === "cancelled") {
     return "cancelled";
   }
-  if (status === "running" || status === "queued") {
+  if (status === "submitting" || status === "running" || status === "queued") {
     return "running";
   }
   return "pending";
+}
+
+function markPendingExecutionItemsBlocked(startIndex: number, reason: string): void {
+  executionItems.value = executionItems.value.map((item, index) => {
+    if (index < startIndex || item.runId || item.status !== "pending") {
+      return item;
+    }
+
+    return {
+      ...item,
+      status: "blocked",
+      blockedReason: reason,
+    };
+  });
 }
 
 function buildExecutionReportHtml(): string {
@@ -1452,6 +1537,7 @@ async function startSelectedTests(): Promise<void> {
   try {
     for (let index = 0; index < executionItems.value.length; index += 1) {
       if (token !== executionToken.value) {
+        markPendingExecutionItemsBlocked(index, "测试流程已停止，后续测试未执行。");
         break;
       }
 
@@ -1461,7 +1547,9 @@ async function startSelectedTests(): Promise<void> {
       }));
 
       const currentItem = executionItems.value[index];
-      currentItem.status = "queued";
+      currentItem.status = "submitting";
+      currentItem.submissionError = undefined;
+      currentItem.blockedReason = undefined;
 
       let run: TestRunRecord;
       try {
@@ -1471,8 +1559,11 @@ async function startSelectedTests(): Promise<void> {
           inputs: {},
         });
       } catch (error) {
+        const errorMessage = getErrorMessage(error);
         currentItem.status = "failed";
-        executionError.value = getErrorMessage(error);
+        currentItem.submissionError = errorMessage;
+        executionError.value = errorMessage;
+        markPendingExecutionItemsBlocked(index + 1, "前一项未成功下发到后端，后续测试未执行。");
         break;
       }
 
@@ -1490,11 +1581,13 @@ async function startSelectedTests(): Promise<void> {
 
       if (finalRun.status === "cancelled") {
         executionError.value = "测试流程已取消。";
+        markPendingExecutionItemsBlocked(index + 1, "前一项已取消，后续测试未执行。");
         break;
       }
     }
   } catch (error) {
     executionError.value = getErrorMessage(error);
+    markPendingExecutionItemsBlocked(0, "测试流程异常中断，后续测试未执行。");
   } finally {
     executionBusy.value = false;
     currentExecutionRunId.value = "";
@@ -1505,6 +1598,7 @@ async function startSelectedTests(): Promise<void> {
 async function cancelExecution(): Promise<void> {
   executionToken.value += 1;
   executionBusy.value = false;
+  markPendingExecutionItemsBlocked(0, "测试流程已停止，后续测试未执行。");
 
   if (currentExecutionRunId.value) {
     await platform.cancelRun(currentExecutionRunId.value);
@@ -1659,7 +1753,7 @@ async function skipActiveManualPrompt(): Promise<void> {
             <p class="execution-subtitle">共 {{ executionItems.length }} 项测试，已完成 {{ completedExecutionCount }} 项，通过 {{ passedExecutionCount }} 项。</p>
           </div>
           <div class="execution-header-side">
-            <span class="status-pill" :data-tone="overallExecutionStatus === 'passed' ? 'good' : overallExecutionStatus === 'failed' || overallExecutionStatus === 'cancelled' ? 'bad' : overallExecutionStatus === 'running' ? 'warn' : undefined">
+            <span class="status-pill" :data-tone="getExecutionStatusTone(overallExecutionStatus)">
               {{ translateExecutionStatus(overallExecutionStatus) }}
             </span>
             <strong>{{ progressPercent }}%</strong>
@@ -1683,7 +1777,7 @@ async function skipActiveManualPrompt(): Promise<void> {
                 </div>
               </div>
               <div class="execution-item-header-side">
-                <span class="status-pill" :data-tone="getExecutionItemStatus(item) === 'passed' ? 'good' : getExecutionItemStatus(item) === 'failed' || getExecutionItemStatus(item) === 'cancelled' ? 'bad' : getExecutionItemStatus(item) === 'running' || getExecutionItemStatus(item) === 'queued' ? 'warn' : undefined">
+                <span class="status-pill" :data-tone="getExecutionStatusTone(getExecutionItemStatus(item))">
                   {{ translateExecutionStatus(getExecutionItemStatus(item)) }}
                 </span>
                 <span class="accordion-arrow" :data-expanded="item.expanded">▾</span>
@@ -1718,6 +1812,7 @@ async function skipActiveManualPrompt(): Promise<void> {
                 <div class="step-indicator" :data-state="getPlaceholderStepState(item)">
                   <span v-if="getPlaceholderStepState(item) === 'running'" class="spinner"></span>
                   <span v-else-if="getPlaceholderStepState(item) === 'failed'">✕</span>
+                  <span v-else-if="getPlaceholderStepState(item) === 'warn'">!</span>
                   <span v-else>·</span>
                 </div>
                 <div class="step-content">
