@@ -26,6 +26,11 @@ interface SkippedConfigCandidate {
   currentValue?: unknown;
   properties?: ConfigurationProperties;
   error?: string;
+  name?: string;
+  info?: string;
+  attemptedValue?: number;
+  fallbackAttemptedValue?: number;
+  finalReadBackValue?: unknown;
 }
 
 interface ParameterTestResult {
@@ -103,6 +108,24 @@ class ConfigurationReadBackMismatchError extends Error {
     super(`参数 ${parameter} 写入 ${expectedValue} 后读回为 ${String(readBackRaw)}。`);
     this.name = "ConfigurationReadBackMismatchError";
   }
+}
+
+function toUnwritableSkipRecord(
+  candidate: WritableConfigCandidate,
+  error: unknown,
+): SkippedConfigCandidate {
+  return {
+    parameter: candidate.parameter,
+    reason: "write-not-effective",
+    name: candidate.name,
+    info: candidate.info,
+    currentValue: candidate.currentValue,
+    properties: candidate.properties,
+    attemptedValue: candidate.targetValue,
+    fallbackAttemptedValue: candidate.fallbackTargetValue,
+    finalReadBackValue: error instanceof ConfigurationReadBackMismatchError ? error.readBackRaw : undefined,
+    error: error instanceof Error ? error.message : String(error),
+  };
 }
 
 async function findWritableCandidates(
@@ -439,6 +462,7 @@ export const configurationReadWriteDefinition: ExecutableTestDefinition = {
   async run(context) {
     await context.log("info", "precheck.start", "开始探测可批量读写的 Configuration 参数");
     const discovery = await findWritableCandidates(context);
+    const runtimeSkipped = [...discovery.skipped];
 
     await context.log("info", "precheck.summary", "Configuration 参数探测完成", {
       totalParameters: discovery.parameters.length,
@@ -459,27 +483,33 @@ export const configurationReadWriteDefinition: ExecutableTestDefinition = {
         const result = await testWritableCandidate(context, candidate, index + 1, discovery.writable.length);
         results.push(result);
       } catch (error) {
-        throw new Error(
-          `Configuration 参数 ${candidate.parameter} 批量测试失败：${error instanceof Error ? error.message : String(error)}`,
+        const skipRecord = toUnwritableSkipRecord(candidate, error);
+        runtimeSkipped.push(skipRecord);
+        await context.log(
+          "warn",
+          `parameter.${candidate.parameter}.skip`,
+          `${describeParameter(candidate.parameter, candidate.name, candidate.info)} 写入不生效，跳过并继续下一个参数`,
+          skipRecord as unknown as Record<string, unknown>,
         );
       }
     }
 
     await context.log("info", "result", "Configuration 参数批量读写测试通过", {
       testedCount: results.length,
-      skippedCount: discovery.skipped.length,
+      skippedCount: runtimeSkipped.length,
       testedParameters: results.map((result) => ({
         parameter: result.parameter,
         label: describeParameter(result.parameter, result.parameterName, result.parameterInfo),
       })),
+      skippedParameters: runtimeSkipped,
     });
 
     return {
       totalCount: discovery.parameters.length,
       testedCount: results.length,
-      skippedCount: discovery.skipped.length,
+      skippedCount: runtimeSkipped.length,
       testedParameters: results.map((result) => result.parameter),
-      skippedParameters: discovery.skipped,
+      skippedParameters: runtimeSkipped,
       results,
     };
   },
