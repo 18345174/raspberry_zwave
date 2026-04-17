@@ -232,13 +232,18 @@ async function setAndVerifyParameter(
   });
   const readBack = Number(readBackRaw);
 
-  await context.log("info", stepKey, `${describeParameter(candidate.parameter, candidate.name, candidate.info)} 读回完成`, {
+  await context.log(
+    "info",
+    stepKey,
+    `${describeParameter(candidate.parameter, candidate.name, candidate.info)} 读回完成（期望 ${targetValue}，实际 ${String(readBackRaw)}）`,
+    {
     parameter: candidate.parameter,
     parameterName: candidate.name,
     parameterInfo: candidate.info,
     expectedValue: targetValue,
     readBack,
-  });
+    },
+  );
 
   if (readBack !== targetValue) {
     throw new Error(`参数 ${candidate.parameter} 写入 ${targetValue} 后读回为 ${String(readBackRaw)}。`);
@@ -288,13 +293,18 @@ async function testWritableCandidate(
 
   let restoredValue: number | undefined;
   try {
-    await context.log("info", `parameter.${candidate.parameter}.write.set`, `${parameterLabel} 开始写入测试值`, {
+    await context.log(
+      "info",
+      `parameter.${candidate.parameter}.write.set`,
+      `${parameterLabel} 开始写入测试值（${candidate.currentValue} -> ${candidate.targetValue}）`,
+      {
       parameter: candidate.parameter,
       parameterName: candidate.name,
       parameterInfo: candidate.info,
       from: candidate.currentValue,
       to: candidate.targetValue,
-    });
+      },
+    );
     const writtenValue = await setAndVerifyParameter(
       context,
       candidate,
@@ -302,13 +312,18 @@ async function testWritableCandidate(
       `parameter.${candidate.parameter}.write.verify`,
     );
 
-    await context.log("info", `parameter.${candidate.parameter}.restore.set`, `${parameterLabel} 开始恢复原值`, {
+    await context.log(
+      "info",
+      `parameter.${candidate.parameter}.restore.set`,
+      `${parameterLabel} 开始恢复原值（${writtenValue} -> ${candidate.currentValue}）`,
+      {
       parameter: candidate.parameter,
       parameterName: candidate.name,
       parameterInfo: candidate.info,
       from: writtenValue,
       to: candidate.currentValue,
-    });
+      },
+    );
     restoredValue = await setAndVerifyParameter(
       context,
       candidate,

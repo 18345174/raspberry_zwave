@@ -359,7 +359,7 @@ function getExecutionLogs(item: ExecutionItem): TestLogRecord[] {
       const aggregatedLog: AggregatedStepRecord = {
         ...log,
         stepKey: "configuration.parameter.summary",
-        message: getConfigurationStageMessage(label, stage),
+        message: getConfigurationStageMessage(label, stage, log),
         payloadJson: {
           ...(log.payloadJson ?? {}),
           aggregatedKind: "configuration-parameter",
@@ -464,14 +464,31 @@ function getConfigurationParameterLabel(log: TestLogRecord, parameter: number): 
   return label ? `Configuration 参数 ${parameter}（${label}）` : `Configuration 参数 ${parameter}`;
 }
 
-function getConfigurationStageMessage(label: string, stage: string): string {
+function getConfigurationStageMessage(label: string, stage: string, log: TestLogRecord): string {
+  const from = typeof log.payloadJson?.from === "number" ? log.payloadJson.from : undefined;
+  const to = typeof log.payloadJson?.to === "number" ? log.payloadJson.to : undefined;
+  const expectedValue = typeof log.payloadJson?.expectedValue === "number" ? log.payloadJson.expectedValue : undefined;
+  const readBack = typeof log.payloadJson?.readBack === "number" ? log.payloadJson.readBack : undefined;
+
   if (stage === "result") {
     return `${label} 测试通过`;
   }
   if (stage.startsWith("write")) {
+    if (stage === "write.set" && from != undefined && to != undefined) {
+      return `${label} 写入测试值（${from} -> ${to}）`;
+    }
+    if (stage === "write.verify" && expectedValue != undefined && readBack != undefined) {
+      return `${label} 写入校验（期望 ${expectedValue}，实际 ${readBack}）`;
+    }
     return `${label} 写入测试值`;
   }
   if (stage.startsWith("restore")) {
+    if (stage === "restore.set" && from != undefined && to != undefined) {
+      return `${label} 恢复原值（${from} -> ${to}）`;
+    }
+    if (stage === "restore.verify" && expectedValue != undefined && readBack != undefined) {
+      return `${label} 恢复校验（期望 ${expectedValue}，实际 ${readBack}）`;
+    }
     return `${label} 恢复原值`;
   }
   return `开始测试 ${label}`;
