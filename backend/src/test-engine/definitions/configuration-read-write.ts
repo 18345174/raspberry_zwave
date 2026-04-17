@@ -73,6 +73,9 @@ function chooseTargetValue(
   ) {
     return normalizedDefaultValue;
   }
+  if (currentValue !== 1 && 1 >= minValue && 1 <= maxValue) {
+    return 1;
+  }
   if (currentValue !== minValue) {
     return minValue;
   }
