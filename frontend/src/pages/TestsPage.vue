@@ -9,7 +9,7 @@ import { translateRunStatus } from "../utils/ui-text";
 
 type TestPageStage = "devices" | "definitions" | "execution";
 type ExecutionStatus = TestRunRecord["status"] | "pending";
-type StepState = "pending" | "running" | "passed" | "failed";
+type StepState = "pending" | "running" | "passed" | "failed" | "warn";
 
 interface ExecutionItem {
   definition: TestDefinition;
@@ -414,6 +414,10 @@ function getLogStepState(item: ExecutionItem, index: number, logs: TestLogRecord
 
   if (log?.level === "error") {
     return "failed";
+  }
+
+  if (log?.level === "warn") {
+    return "warn";
   }
 
   if (log?.stepKey === "configuration.parameter.summary") {
@@ -1489,6 +1493,7 @@ async function cancelExecution(): Promise<void> {
                     <span v-if="getLogStepState(item, logIndex, getExecutionLogs(item)) === 'running'" class="spinner"></span>
                     <span v-else-if="getLogStepState(item, logIndex, getExecutionLogs(item)) === 'passed'">✓</span>
                     <span v-else-if="getLogStepState(item, logIndex, getExecutionLogs(item)) === 'failed'">✕</span>
+                    <span v-else-if="getLogStepState(item, logIndex, getExecutionLogs(item)) === 'warn'">!</span>
                     <span v-else>·</span>
                   </div>
                   <div class="step-content">
@@ -1909,6 +1914,12 @@ async function cancelExecution(): Promise<void> {
   color: var(--warn);
   border-color: rgba(194, 125, 18, 0.24);
   background: rgba(255, 247, 231, 0.88);
+}
+
+.step-indicator[data-state="warn"] {
+  color: #9a6413;
+  border-color: rgba(194, 125, 18, 0.32);
+  background: rgba(255, 240, 205, 0.92);
 }
 
 .step-content {
