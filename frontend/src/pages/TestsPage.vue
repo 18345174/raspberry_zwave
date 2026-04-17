@@ -495,9 +495,24 @@ function formatReportFailureLogs(logs: TestLogRecord[]): string {
   }).join("\n");
 }
 
+function getReportStatusTone(status: ExecutionStatus): "passed" | "failed" | "cancelled" | "running" | "pending" {
+  if (status === "passed") {
+    return "passed";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  if (status === "running" || status === "queued") {
+    return "running";
+  }
+  return "pending";
+}
+
 function buildExecutionReportHtml(): string {
   const reportGeneratedAt = new Date().toLocaleString();
-  const nodeTitle = selectedNode.value ? `#${selectedNode.value.nodeId} ${describeNode(selectedNode.value)}` : "-";
   const overallStatusText = translateExecutionStatus(overallExecutionStatus.value);
   const deviceSummary = [
     ["节点 ID", selectedNode.value ? String(selectedNode.value.nodeId) : "-"],
@@ -524,12 +539,34 @@ function buildExecutionReportHtml(): string {
         <td>${escapeHtml(value)}</td>
       </tr>`).join("");
 
-  const resultRows = executionItems.value.map((item, index) => `
+  const overviewCards = [
+    ["总体状态", overallStatusText, getReportStatusTone(overallExecutionStatus.value)],
+    ["测试项总数", String(executionItems.value.length), "pending"],
+    ["已完成", String(completedExecutionCount.value), "running"],
+    ["已通过", String(passedExecutionCount.value), "passed"],
+  ] as const;
+
+  const overviewCardMarkup = overviewCards.map(([label, value, tone]) => `
+      <article class="overview-card" data-tone="${tone}">
+        <span class="overview-label">${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+      </article>
+  `).join("");
+
+  const resultRows = executionItems.value.map((item, index) => {
+    const status = getExecutionItemStatus(item);
+    const tone = getReportStatusTone(status);
+    return `
       <tr>
         <td>${index + 1}</td>
         <td>${escapeHtml(item.definition.name)}</td>
-        <td>${escapeHtml(translateExecutionStatus(getExecutionItemStatus(item)))}</td>
-      </tr>`).join("");
+        <td>
+          <span class="status-badge" data-tone="${tone}">
+            ${escapeHtml(translateExecutionStatus(status))}
+          </span>
+        </td>
+      </tr>`;
+  }).join("");
 
   const failureSections = executionItems.value.map((item, index) => {
     const run = getExecutionRun(item);
@@ -579,63 +616,137 @@ function buildExecutionReportHtml(): string {
   <style>
     :root {
       color-scheme: light;
-      --ink: #1f172e;
-      --muted: #6f6782;
-      --line: #ddd6ef;
-      --paper: #f6f3fb;
+      --ink: #222b45;
+      --muted: #7a839a;
+      --line: #e7ebf3;
+      --paper: #f7f9fc;
       --card: #ffffff;
-      --accent: #5c39b5;
-      --accent-soft: #efe7ff;
-      --good: #117a50;
-      --bad: #af3f31;
+      --accent: #5a6acf;
+      --accent-soft: #eef2ff;
+      --good: #1f9d68;
+      --good-soft: #e8f8f0;
+      --bad: #de4b4b;
+      --bad-soft: #fff0f0;
+      --warn: #ffb020;
+      --warn-soft: #fff6df;
+      --idle: #8f9bb3;
+      --idle-soft: #f1f4f9;
+      --shadow: 0 12px 30px rgba(31, 45, 61, 0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       padding: 32px;
-      background: linear-gradient(180deg, #f7f4fc 0%, #f0ebf8 100%);
+      background:
+        radial-gradient(circle at top left, rgba(90, 106, 207, 0.10), transparent 28%),
+        linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
       color: var(--ink);
-      font: 14px/1.6 "PingFang SC", "Microsoft YaHei", sans-serif;
+      font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     }
     .report-shell {
-      max-width: 1120px;
+      max-width: 1180px;
       margin: 0 auto;
       display: grid;
-      gap: 20px;
+      gap: 24px;
     }
-    .hero, .summary-card, .test-card, .notice-card {
+    .hero, .summary-card, .test-card, .notice-card, .failure-card {
       background: rgba(255, 255, 255, 0.94);
       border: 1px solid var(--line);
-      border-radius: 22px;
-      box-shadow: 0 18px 36px rgba(76, 52, 130, 0.08);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
     }
     .summary-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 20px;
     }
-    .hero, .summary-card, .notice-card {
-      padding: 24px 28px;
+    .hero, .summary-card, .notice-card, .test-card, .failure-card {
+      padding: 24px;
     }
-    .hero h1, .test-card h2, .failure-card h3 { margin: 0; }
-    .hero p, .meta-line { margin: 6px 0 0; color: var(--muted); }
+    .hero {
+      padding: 28px;
+    }
+    .hero-kicker,
+    .section-kicker-report {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .hero h1, .test-card h2, .failure-card h3, .summary-card h2 { margin: 0; }
+    .hero h1 {
+      margin-top: 12px;
+      font-size: 32px;
+      line-height: 1.2;
+    }
+    .hero p, .meta-line { margin: 8px 0 0; color: var(--muted); }
+    .hero p {
+      max-width: 720px;
+      font-size: 15px;
+    }
+    .overview-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .overview-card {
+      display: grid;
+      gap: 8px;
+      padding: 16px 18px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+    .overview-card strong {
+      font-size: 24px;
+      line-height: 1.1;
+    }
+    .overview-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .overview-card[data-tone="passed"] {
+      background: var(--good-soft);
+      border-color: rgba(31, 157, 104, 0.18);
+    }
+    .overview-card[data-tone="failed"],
+    .overview-card[data-tone="cancelled"] {
+      background: var(--bad-soft);
+      border-color: rgba(222, 75, 75, 0.18);
+    }
+    .overview-card[data-tone="running"] {
+      background: var(--warn-soft);
+      border-color: rgba(255, 176, 32, 0.18);
+    }
     .summary-table {
       width: 100%;
       border-collapse: collapse;
     }
+    .summary-card h2,
+    .test-card h2 {
+      margin-bottom: 14px;
+      font-size: 18px;
+    }
     .summary-table th, .summary-table td {
-      padding: 12px 14px;
-      border-bottom: 1px solid #eee8fa;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: top;
     }
     .summary-table th {
-      width: 180px;
+      width: 160px;
       color: var(--muted);
       font-weight: 700;
-    }
-    .test-card {
-      padding: 24px 28px;
     }
     .meta-grid {
       display: grid;
@@ -647,15 +758,16 @@ function buildExecutionReportHtml(): string {
     .result-table {
       width: 100%;
       border-collapse: collapse;
+      overflow: hidden;
     }
     .result-table th, .result-table td {
-      padding: 12px 14px;
-      border-bottom: 1px solid #eee8fa;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: top;
     }
     .result-table thead {
-      background: var(--paper);
+      background: linear-gradient(180deg, #f8faff 0%, #f3f6fb 100%);
     }
     .result-table th {
       color: var(--muted);
@@ -663,20 +775,49 @@ function buildExecutionReportHtml(): string {
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
+    .result-table tbody tr:hover {
+      background: rgba(90, 106, 207, 0.04);
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .status-badge[data-tone="passed"] {
+      color: var(--good);
+      background: var(--good-soft);
+    }
+    .status-badge[data-tone="failed"],
+    .status-badge[data-tone="cancelled"] {
+      color: var(--bad);
+      background: var(--bad-soft);
+    }
+    .status-badge[data-tone="running"] {
+      color: #9a6a00;
+      background: var(--warn-soft);
+    }
+    .status-badge[data-tone="pending"] {
+      color: var(--idle);
+      background: var(--idle-soft);
+    }
     .failure-card {
       display: grid;
-      gap: 16px;
-      padding: 24px 28px;
+      gap: 18px;
       border: 1px solid rgba(175, 63, 49, 0.18);
-      border-radius: 22px;
-      background: #fff7f5;
-      box-shadow: 0 18px 36px rgba(76, 52, 130, 0.08);
+      background: linear-gradient(180deg, #fff8f8 0%, #fffdfd 100%);
     }
     .failure-card-header {
       display: flex;
       justify-content: space-between;
       gap: 16px;
       align-items: start;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(222, 75, 75, 0.12);
     }
     .failure-detail-grid {
       display: grid;
@@ -684,6 +825,11 @@ function buildExecutionReportHtml(): string {
     }
     .failure-card p, .failure-card strong {
       margin: 0;
+    }
+    .failure-detail-grid strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--ink);
     }
     .failure-card pre {
       margin: 0;
@@ -702,7 +848,14 @@ function buildExecutionReportHtml(): string {
     }
     @media (max-width: 768px) {
       body { padding: 16px; }
-      .test-card-header { grid-template-columns: 1fr; display: grid; }
+      .summary-grid,
+      .overview-strip {
+        grid-template-columns: 1fr;
+      }
+      .failure-card-header {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
       .meta-grid { text-align: left; white-space: normal; }
       .summary-table th { width: 120px; }
     }
@@ -711,12 +864,16 @@ function buildExecutionReportHtml(): string {
 <body>
   <main class="report-shell">
     <section class="hero">
+      <span class="hero-kicker">Overview</span>
       <h1>Z-Wave 自动化测试报告</h1>
       <p>该报告由测试中心一键导出，顶部展示测试设备与环境信息，下方展示测试项结果列表；如存在失败项，会在末尾附带失败步骤和相关日志。</p>
+      <div class="overview-strip">${overviewCardMarkup}
+      </div>
     </section>
 
     <div class="summary-grid">
       <section class="summary-card">
+        <span class="section-kicker-report">Device</span>
         <h2>测试设备信息</h2>
         <table class="summary-table">
           <tbody>${buildSummaryRows(deviceSummary)}
@@ -725,6 +882,7 @@ function buildExecutionReportHtml(): string {
       </section>
 
       <section class="summary-card">
+        <span class="section-kicker-report">Environment</span>
         <h2>环境信息</h2>
         <table class="summary-table">
           <tbody>${buildSummaryRows(environmentSummary)}
