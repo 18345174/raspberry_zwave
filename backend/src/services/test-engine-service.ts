@@ -45,20 +45,21 @@ export class TestEngineService {
 
   public async listSupportedDefinitions(nodeId: number) {
     const node = await this.requireNode(nodeId);
-    const refreshedNode = await this.tryRefreshNode(nodeId);
+    const liveNode = await this.tryReadLiveNode(nodeId);
+    const supportedCcNode = await this.tryReadSupportedCommandClasses(nodeId);
 
     return executableDefinitions
       .filter((definition) => {
-        const snapshotSupport = definition.supports(node);
-        if (snapshotSupport.supported) {
-          return true;
-        }
+        for (const candidate of [node, liveNode, supportedCcNode]) {
+          if (!candidate) {
+            continue;
+          }
 
-        if (!refreshedNode) {
-          return false;
+          if (definition.supports(candidate).supported) {
+            return true;
+          }
         }
-
-        return definition.supports(refreshedNode).supported;
+        return false;
       })
       .map((definition) => definition.meta);
   }
@@ -134,8 +135,9 @@ export class TestEngineService {
   }
 
   public async createRun(input: CreateTestRunInput): Promise<TestRunRecord> {
-    if (this.activeRunId) {
-      throw new Error("Only one formal test run is allowed at a time.");
+    const blockingRun = this.findBlockingRun();
+    if (blockingRun) {
+      throw new Error(`已有测试正在执行，请等待当前测试结束后再继续：${blockingRun.testDefinitionId} (${blockingRun.id})`);
     }
 
     const runtimeStatus = await this.zwaveRuntime.getStatus();
@@ -154,9 +156,16 @@ export class TestEngineService {
     let node = await this.requireNode(input.nodeId);
     let support = definition.supports(node);
     if (!support.supported) {
-      const refreshedNode = await this.tryRefreshNode(input.nodeId);
-      if (refreshedNode) {
-        node = refreshedNode;
+      const liveNode = await this.tryReadLiveNode(input.nodeId);
+      if (liveNode) {
+        node = liveNode;
+        support = definition.supports(node);
+      }
+    }
+    if (!support.supported) {
+      const supportedCcNode = await this.tryReadSupportedCommandClasses(input.nodeId);
+      if (supportedCcNode) {
+        node = supportedCcNode;
         support = definition.supports(node);
       }
     }
@@ -537,9 +546,30 @@ export class TestEngineService {
     return node;
   }
 
-  private async tryRefreshNode(nodeId: number): Promise<NodeDetail | undefined> {
+  private findBlockingRun(): TestRunRecord | undefined {
+    if (this.activeRunId) {
+      const activeRun = this.storage.getTestRun(this.activeRunId);
+      if (activeRun && (activeRun.status === "queued" || activeRun.status === "running")) {
+        return activeRun;
+      }
+    }
+
+    return this.storage.listTestRuns().find((run) => run.status === "queued" || run.status === "running");
+  }
+
+  private async tryReadLiveNode(nodeId: number): Promise<NodeDetail | undefined> {
     try {
-      return await this.nodeRegistry.refreshNode(nodeId);
+      const node = await this.zwaveRuntime.getNode(nodeId);
+      this.storage.upsertNodeSnapshot(node);
+      return node;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async tryReadSupportedCommandClasses(nodeId: number): Promise<NodeDetail | undefined> {
+    try {
+      return await this.nodeRegistry.readSupportedCommandClasses(nodeId);
     } catch {
       return undefined;
     }
