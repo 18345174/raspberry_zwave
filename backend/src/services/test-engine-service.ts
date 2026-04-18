@@ -45,8 +45,21 @@ export class TestEngineService {
 
   public async listSupportedDefinitions(nodeId: number) {
     const node = await this.requireNode(nodeId);
+    const refreshedNode = await this.tryRefreshNode(nodeId);
+
     return executableDefinitions
-      .filter((definition) => definition.supports(node).supported)
+      .filter((definition) => {
+        const snapshotSupport = definition.supports(node);
+        if (snapshotSupport.supported) {
+          return true;
+        }
+
+        if (!refreshedNode) {
+          return false;
+        }
+
+        return definition.supports(refreshedNode).supported;
+      })
       .map((definition) => definition.meta);
   }
 
@@ -138,8 +151,15 @@ export class TestEngineService {
       throw new Error(`Unknown test definition: ${input.testDefinitionId}`);
     }
 
-    const node = await this.requireNode(input.nodeId);
-    const support = definition.supports(node);
+    let node = await this.requireNode(input.nodeId);
+    let support = definition.supports(node);
+    if (!support.supported) {
+      const refreshedNode = await this.tryRefreshNode(input.nodeId);
+      if (refreshedNode) {
+        node = refreshedNode;
+        support = definition.supports(node);
+      }
+    }
     if (!support.supported) {
       throw new Error(support.reason ?? "The selected node does not support this test.");
     }
@@ -515,6 +535,14 @@ export class TestEngineService {
       return refreshed;
     }
     return node;
+  }
+
+  private async tryRefreshNode(nodeId: number): Promise<NodeDetail | undefined> {
+    try {
+      return await this.nodeRegistry.refreshNode(nodeId);
+    } catch {
+      return undefined;
+    }
   }
 
   private recoverInterruptedRuns(): void {

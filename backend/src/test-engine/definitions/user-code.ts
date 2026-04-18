@@ -59,6 +59,12 @@ function normalizeReportCode(value: string | Uint8Array | undefined): string | u
   return undefined;
 }
 
+function extractNotificationUserId(parameters: Record<string, unknown>): number | undefined {
+  const rawUserId = parameters.userId ?? parameters["0"];
+  const userId = Number(rawUserId);
+  return Number.isInteger(userId) && userId > 0 ? userId : undefined;
+}
+
 function ensureAddIsSupported(capabilities: UserCodeCapabilities | undefined): void {
   const supportedStatuses = capabilities?.supportedUserIDStatuses;
   if (Array.isArray(supportedStatuses) && !supportedStatuses.includes(UserIDStatus.Enabled)) {
@@ -223,7 +229,7 @@ async function waitForManualKeypadUnlock(
       const parameters = (args.parameters ?? {}) as Record<string, unknown>;
       return Number(args.type) === 6
         && Number(args.event) === 6
-        && Number(parameters.userId) === userId;
+        && extractNotificationUserId(parameters) === userId;
     },
   });
 }

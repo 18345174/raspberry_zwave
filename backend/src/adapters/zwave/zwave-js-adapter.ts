@@ -1016,7 +1016,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     driver.on("node value removed", forwardValueEvent("zwave.value.updated", "[value] Value removed"));
     driver.on("node metadata updated", forwardValueEvent("zwave.value.updated", "[value] Metadata updated"));
     driver.on("node notification", (node: any, ccId: number, args: unknown) => {
-      const summarizedArgs = this.summarizeUnknown(args);
+      const summarizedArgs = this.normalizeNotificationArgs(this.summarizeUnknown(args));
       this.log("info", "[notify] Notification received", {
         nodeId: node.id,
         commandClass: this.getCommandClassName(ccId),
@@ -1382,6 +1382,59 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     } catch {
       return String(input);
     }
+  }
+
+  private normalizeNotificationArgs(input: unknown): unknown {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return input;
+    }
+
+    const args = input as Record<string, unknown>;
+    const parameters = args.parameters;
+    if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) {
+      return input;
+    }
+
+    const normalizedParameters = this.normalizeNotificationParameters(
+      Number(args.type),
+      Number(args.event),
+      parameters as Record<string, unknown>,
+    );
+
+    if (normalizedParameters === parameters) {
+      return input;
+    }
+
+    return {
+      ...args,
+      parameters: normalizedParameters,
+    };
+  }
+
+  private normalizeNotificationParameters(
+    notificationType: number,
+    notificationEvent: number,
+    parameters: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (notificationType !== 6 || "userId" in parameters) {
+      return parameters;
+    }
+
+    const accessControlEventsWithUserId = new Set([5, 6, 14, 15, 16]);
+    if (!accessControlEventsWithUserId.has(notificationEvent)) {
+      return parameters;
+    }
+
+    const rawUserId = parameters["0"];
+    const userId = Number(rawUserId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return parameters;
+    }
+
+    return {
+      ...parameters,
+      userId,
+    };
   }
 
   private updateStatus(partial: Partial<DriverStatus>): void {

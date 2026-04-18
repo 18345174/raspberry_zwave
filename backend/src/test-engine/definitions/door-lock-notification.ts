@@ -118,6 +118,12 @@ function normalizeReportCode(value: string | Uint8Array | undefined): string | u
   return undefined;
 }
 
+function extractNotificationUserId(parameters: Record<string, unknown>): number | undefined {
+  const rawUserId = parameters.userId ?? parameters["0"];
+  const userId = Number(rawUserId);
+  return Number.isInteger(userId) && userId > 0 ? userId : undefined;
+}
+
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -376,7 +382,7 @@ async function waitForAccessControlSignal(
           }
 
           const parameters = (args.parameters ?? {}) as Record<string, unknown>;
-          const actualUserId = Number(parameters.userId);
+          const actualUserId = extractNotificationUserId(parameters);
           return !Number.isFinite(actualUserId) || actualUserId === input.expectedUserId;
         },
       },
@@ -423,32 +429,58 @@ async function executeRfNotificationPhase(
     timeoutMs: NOTIFICATION_WAIT_TIMEOUT_MS,
   });
 
-  await context.invokeCcApi({
-    commandClass: "Door Lock",
-    method: "set",
-    args: [input.targetMode],
-  });
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await context.invokeCcApi({
+      commandClass: "Door Lock",
+      method: "set",
+      args: [input.targetMode],
+    });
 
-  const signal = await waitForAccessControlSignal(context, {
-    expectedEvent: input.expectedEvent,
-    timeoutMs: NOTIFICATION_WAIT_TIMEOUT_MS,
-  });
-  if ("skipped" in signal) {
-    throw new Error(`${input.phaseLabel}不应被跳过。`);
+    try {
+      const signal = await waitForAccessControlSignal(context, {
+        expectedEvent: input.expectedEvent,
+        timeoutMs: NOTIFICATION_WAIT_TIMEOUT_MS,
+      });
+      if ("skipped" in signal) {
+        throw new Error(`${input.phaseLabel}不应被跳过。`);
+      }
+      const notification = signal.notification;
+      const status = await confirmDoorState(context, input);
+
+      await context.log("info", `${input.phaseKey}.result`, `${input.phaseLabel}消息验证通过`, {
+        notification,
+        status,
+        signalSource: signal.source,
+        attempt,
+      });
+
+      return {
+        notification,
+        status,
+      };
+    } catch (error) {
+      lastError = error;
+      const latestStatus = await readDoorLockStatus(context).catch(() => undefined);
+      const modeMatched = latestStatus?.boltStatus === input.expectedBoltStatus;
+
+      if (attempt >= 2 || modeMatched) {
+        if (modeMatched && error instanceof Error && error.message.startsWith("Timeout while waiting for signal")) {
+          throw new Error(`${input.phaseLabel}命令已生效，但在 ${Math.round(NOTIFICATION_WAIT_TIMEOUT_MS / 1000)} 秒内未收到对应 Notification 消息。`);
+        }
+        throw error;
+      }
+
+      await context.log("warn", `${input.phaseKey}.retry`, `首次执行${input.phaseLabel}未成功，准备重试一次`, {
+        attempt,
+        error: formatErrorMessage(error),
+        latestStatus,
+      });
+      await context.wait(1500);
+    }
   }
-  const notification = signal.notification;
-  const status = await confirmDoorState(context, input);
 
-  await context.log("info", `${input.phaseKey}.result`, `${input.phaseLabel}消息验证通过`, {
-    notification,
-    status,
-    signalSource: signal.source,
-  });
-
-  return {
-    notification,
-    status,
-  };
+  throw lastError instanceof Error ? lastError : new Error(`${input.phaseLabel}消息验证失败。`);
 }
 
 async function executePromptedNotificationPhase(
