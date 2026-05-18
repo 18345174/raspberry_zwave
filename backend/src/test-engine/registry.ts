@@ -5,6 +5,12 @@ import { doorLockNotificationDefinition } from "./definitions/door-lock-notifica
 import { lockBasicDefinition } from "./definitions/lock-basic.js";
 import { nodeHealthDefinition } from "./definitions/node-health.js";
 import { userCodeAddDefinition, userCodeDeleteDefinition, userCodeEditDefinition } from "./definitions/user-code.js";
+import {
+  userCredentialCapabilitiesDefinition,
+  userCredentialDualAuthDefinition,
+  userCredentialFingerprintLifecycleDefinition,
+  userCredentialPinLifecycleDefinition,
+} from "./definitions/user-credential.js";
 
 export const executableDefinitions: ExecutableTestDefinition[] = [
   lockBasicDefinition,
@@ -12,6 +18,10 @@ export const executableDefinitions: ExecutableTestDefinition[] = [
   userCodeAddDefinition,
   userCodeEditDefinition,
   userCodeDeleteDefinition,
+  userCredentialCapabilitiesDefinition,
+  userCredentialPinLifecycleDefinition,
+  userCredentialFingerprintLifecycleDefinition,
+  userCredentialDualAuthDefinition,
   configurationReadWriteDefinition,
   binarySwitchDefinition,
   nodeHealthDefinition,

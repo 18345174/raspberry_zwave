@@ -26,6 +26,10 @@ ZWAVE_KEY_S2_ACCESS_CONTROL=${ZWAVE_KEY_S2_ACCESS_CONTROL:-}
 AUTH_SESSION_TTL_HOURS=${AUTH_SESSION_TTL_HOURS:-24}
 DEFAULT_FRONTEND_PORT=${DEFAULT_FRONTEND_PORT:-5173}
 ENV_FILE=${ENV_FILE:-$REPO_ROOT/backend/.env}
+ZWAVE_JS_PACKAGES=${ZWAVE_JS_PACKAGES:-"zwave-js @zwave-js/core @zwave-js/cc @zwave-js/shared"}
+CHECK_NODE_DEPS_ON_RESTART=${CHECK_NODE_DEPS_ON_RESTART:-true}
+REBUILD_ON_DEP_INSTALL=${REBUILD_ON_DEP_INSTALL:-true}
+FORCE_NPM_INSTALL=${FORCE_NPM_INSTALL:-false}
 
 if [[ ! -f "$ENV_FILE" && -f "$APP_DIR/backend/.env" ]]; then
   ENV_FILE="$APP_DIR/backend/.env"
@@ -45,9 +49,12 @@ Commands:
              render the systemd unit, and restart/enable the backend service.
              Use this after git pull when you want the deployed copy updated.
 
-  restart    Daily restart helper. Checks backend/frontend ports first; if a
-             process is listening, it runs kill -9, then restarts the service.
-             Frontend is only restarted separately when FRONTEND_SERVICE_NAME is set.
+  restart    Daily restart helper. Checks deployed node_modules first; if
+             zwave-js package versions do not match package-lock.json, it runs
+             npm install --include=optional and rebuilds before restarting.
+             Then it checks backend/frontend ports, kills listeners if needed,
+             and restarts the service. Frontend is only restarted separately
+             when FRONTEND_SERVICE_NAME is set.
 
   help       Show this help.
 
@@ -67,6 +74,11 @@ Useful environment variables:
   FRONTEND_SERVICE_NAME   Optional separate frontend systemd service name for restart mode
   FRONTEND_PORT           Optional frontend port to inspect in restart mode. Default: 5173
   ENV_FILE                backend .env path. Default: repo backend/.env, fallback to APP_DIR/backend/.env
+  ZWAVE_JS_PACKAGES       Space-separated packages checked against package-lock.json on restart.
+                          Default: zwave-js @zwave-js/core @zwave-js/cc @zwave-js/shared
+  CHECK_NODE_DEPS_ON_RESTART  Set false to skip dependency version checks in restart. Default: true
+  REBUILD_ON_DEP_INSTALL  Run npm run build after restart installs deps. Default: true
+  FORCE_NPM_INSTALL       Force npm install in install/restart. Default: false
 
 Examples:
   bash deploy/scripts/platform.sh deploy
@@ -160,6 +172,152 @@ restart_service_if_present() {
   sudo systemctl status "$service_name" --no-pager
 }
 
+bool_is_true() {
+  case "${1:-}" in
+    true|TRUE|1|yes|YES|y|Y|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+package_lock_version() {
+  local app_root=$1
+  local package_name=$2
+
+  node - "$app_root" "$package_name" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const appRoot = process.argv[2];
+const packageName = process.argv[3];
+const lockPath = path.join(appRoot, "package-lock.json");
+
+if (!fs.existsSync(lockPath)) {
+  process.exit(2);
+}
+
+const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+const entry = lock.packages && lock.packages[`node_modules/${packageName}`];
+
+if (!entry || !entry.version) {
+  process.exit(3);
+}
+
+console.log(entry.version);
+NODE
+}
+
+installed_package_version() {
+  local app_root=$1
+  local package_name=$2
+
+  node - "$app_root" "$package_name" <<'NODE'
+const path = require("path");
+
+try {
+  const appRoot = process.argv[2];
+  const packageName = process.argv[3];
+  const packageJson = require(path.join(appRoot, "node_modules", packageName, "package.json"));
+  console.log(packageJson.version);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+
+node_dependency_status() {
+  local app_root=$1
+  local needs_install=0
+  local package_name
+  local expected_version
+  local installed_version
+
+  if [[ ! -f "$app_root/package-lock.json" ]]; then
+    echo "[deps] $app_root/package-lock.json not found; cannot verify node dependencies." >&2
+    return 2
+  fi
+
+  if bool_is_true "$FORCE_NPM_INSTALL"; then
+    echo "[deps] FORCE_NPM_INSTALL=true, npm install is required."
+    needs_install=1
+  fi
+
+  if [[ ! -d "$app_root/node_modules" ]]; then
+    echo "[deps] node_modules is missing."
+    needs_install=1
+  fi
+
+  if [[ ! -f "$app_root/node_modules/.package-lock.json" ]]; then
+    echo "[deps] node_modules/.package-lock.json is missing."
+    needs_install=1
+  elif [[ "$app_root/package-lock.json" -nt "$app_root/node_modules/.package-lock.json" ]]; then
+    echo "[deps] package-lock.json is newer than node_modules/.package-lock.json."
+    needs_install=1
+  fi
+
+  for package_name in $ZWAVE_JS_PACKAGES; do
+    expected_version=$(package_lock_version "$app_root" "$package_name" 2>/dev/null || true)
+    if [[ -z "$expected_version" ]]; then
+      echo "[deps] Package $package_name is not present in package-lock.json; skipping version check."
+      continue
+    fi
+
+    installed_version=$(installed_package_version "$app_root" "$package_name" 2>/dev/null || true)
+    if [[ -z "$installed_version" ]]; then
+      echo "[deps] Package $package_name is missing; expected $expected_version."
+      needs_install=1
+      continue
+    fi
+
+    if [[ "$installed_version" != "$expected_version" ]]; then
+      echo "[deps] Package $package_name version mismatch: installed $installed_version, expected $expected_version."
+      needs_install=1
+    else
+      echo "[deps] Package $package_name version OK: $installed_version."
+    fi
+  done
+
+  if [[ "$needs_install" -eq 1 ]]; then
+    return 1
+  fi
+  return 0
+}
+
+install_node_dependencies() {
+  local app_root=$1
+
+  echo "[deps] Running npm install --include=optional in $app_root"
+  (cd "$app_root" && npm install --include=optional)
+
+  if [[ -x "$app_root/deploy/scripts/ensure-rollup-native.sh" || -f "$app_root/deploy/scripts/ensure-rollup-native.sh" ]]; then
+    echo "[deps] Ensuring Rollup native optional dependency"
+    (cd "$app_root" && bash deploy/scripts/ensure-rollup-native.sh)
+  fi
+}
+
+ensure_node_dependencies() {
+  local app_root=$1
+  local should_build=${2:-false}
+
+  if node_dependency_status "$app_root"; then
+    echo "[deps] Node dependencies already match package-lock.json."
+    return
+  fi
+
+  install_node_dependencies "$app_root"
+
+  if node_dependency_status "$app_root"; then
+    echo "[deps] Node dependencies verified after npm install."
+  else
+    echo "[deps] Node dependencies still do not match after npm install." >&2
+    return 1
+  fi
+
+  if bool_is_true "$should_build"; then
+    echo "[deps] Rebuilding application after dependency install"
+    (cd "$app_root" && npm run build)
+  fi
+}
+
 run_install() {
   local unit_tmp
   unit_tmp=$(mktemp)
@@ -176,8 +334,7 @@ run_install() {
     ./ "$APP_DIR"/
 
   cd "$APP_DIR"
-  npm install --include=optional
-  bash deploy/scripts/ensure-rollup-native.sh
+  install_node_dependencies "$APP_DIR"
   npm run build
 
   sudo chown -R "$APP_USER:$APP_GROUP" "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
@@ -255,16 +412,23 @@ run_restart() {
   backend_port=${BACKEND_PORT:-$(read_env_value PORT "$PORT")}
   frontend_port=${FRONTEND_PORT:-$(read_env_value FRONTEND_PORT "$DEFAULT_FRONTEND_PORT")}
 
-  echo "[1/4] Checking backend port"
+  echo "[1/5] Checking deployed node dependencies"
+  if bool_is_true "$CHECK_NODE_DEPS_ON_RESTART"; then
+    ensure_node_dependencies "$APP_DIR" "$REBUILD_ON_DEP_INSTALL"
+  else
+    echo "[deps] CHECK_NODE_DEPS_ON_RESTART=false, skipping dependency checks."
+  fi
+
+  echo "[2/5] Checking backend port"
   kill_port_if_needed "$backend_port" "backend"
 
-  echo "[2/4] Checking frontend port"
+  echo "[3/5] Checking frontend port"
   kill_port_if_needed "$frontend_port" "frontend"
 
-  echo "[3/4] Restarting backend service"
+  echo "[4/5] Restarting backend service"
   restart_service_if_present "$SERVICE_NAME" "backend"
 
-  echo "[4/4] Restarting frontend service"
+  echo "[5/5] Restarting frontend service"
   if [[ -n "$FRONTEND_SERVICE_NAME" ]]; then
     restart_service_if_present "$FRONTEND_SERVICE_NAME" "frontend"
   else
