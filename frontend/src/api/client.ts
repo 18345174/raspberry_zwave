@@ -169,6 +169,9 @@ export const apiClient = {
   refreshNode(nodeId: number) {
     return request<NodeDetail>(`/api/nodes/${nodeId}/refresh`, { method: "POST" });
   },
+  reinterviewNode(nodeId: number) {
+    return request<NodeDetail>(`/api/nodes/${nodeId}/reinterview`, { method: "POST" });
+  },
   readSupportedCommandClasses(nodeId: number) {
     return request<NodeDetail>(`/api/nodes/${nodeId}/read-supported-cc`, { method: "POST" });
   },

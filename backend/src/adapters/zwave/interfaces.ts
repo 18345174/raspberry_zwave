@@ -33,6 +33,7 @@ export interface IZwaveAdapter {
   getNode(nodeId: number): Promise<NodeDetail>;
   renameNode(nodeId: number, name: string): Promise<NodeDetail>;
   refreshNode(nodeId: number): Promise<NodeDetail>;
+  reinterviewNode(nodeId: number): Promise<NodeDetail>;
   readSupportedCommandClasses(nodeId: number): Promise<NodeDetail>;
   getContactConfig(nodeId: number): Promise<ContactConfigRow[]>;
   getFirmwareUpdateCapabilities(nodeId: number): Promise<FirmwareUpdateCapabilities>;

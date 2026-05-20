@@ -53,6 +53,12 @@ export class NodeRegistryService {
     return node;
   }
 
+  public async reinterviewNode(nodeId: number): Promise<NodeDetail> {
+    const node = await this.zwaveAdapter.reinterviewNode(nodeId);
+    this.storage.upsertNodeSnapshot(node);
+    return node;
+  }
+
   public async readSupportedCommandClasses(nodeId: number): Promise<NodeDetail> {
     const node = await this.zwaveAdapter.readSupportedCommandClasses(nodeId);
     this.storage.upsertNodeSnapshot(node);

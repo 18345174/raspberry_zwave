@@ -212,6 +212,11 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return await services.nodeRegistry.refreshNode(nodeId);
   });
 
+  app.post("/api/nodes/:nodeId/reinterview", async (request) => {
+    const { nodeId } = nodeIdParamSchema.parse(request.params);
+    return await services.nodeRegistry.reinterviewNode(nodeId);
+  });
+
   app.post("/api/nodes/:nodeId/read-supported-cc", async (request) => {
     const { nodeId } = nodeIdParamSchema.parse(request.params);
     return await services.nodeRegistry.readSupportedCommandClasses(nodeId);

@@ -59,6 +59,7 @@ type MutableFirmwareUpdateSession = FirmwareUpdateStatus & {
 };
 
 const SUPPORTED_CC_READ_TIMEOUT_MS = 30_000;
+const NODE_REINTERVIEW_TIMEOUT_MS = 180_000;
 
 export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private readonly serialDiscovery = new SerialDiscoveryService();
@@ -367,6 +368,34 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
     await node.refreshInfo();
     return this.toNodeDetail(node);
+  }
+
+  public async reinterviewNode(nodeId: number): Promise<NodeDetail> {
+    this.ensureDriverReady();
+    const node = this.driver.controller.nodes.get(nodeId);
+    if (!node) {
+      throw new Error(`Node ${nodeId} not found.`);
+    }
+    if (node?.id === this.status.controllerId) {
+      throw new Error("The controller node cannot be re-interviewed.");
+    }
+    if (!this.isNodeInterviewComplete(node)) {
+      await this.waitForNodeInterviewCompletion(node, NODE_REINTERVIEW_TIMEOUT_MS);
+      return this.toNodeDetail(node);
+    }
+
+    this.publishedReadyNodeIds.delete(nodeId);
+    this.log("info", "[node] Re-interview requested", {
+      nodeId,
+      waitForWakeup: false,
+    });
+
+    await node.refreshInfo({ waitForWakeup: false });
+    await this.waitForNodeInterviewCompletion(node, NODE_REINTERVIEW_TIMEOUT_MS);
+
+    const detail = this.toNodeDetail(node);
+    this.publish({ type: "zwave.node.updated", payload: detail });
+    return detail;
   }
 
   public async readSupportedCommandClasses(nodeId: number): Promise<NodeDetail> {

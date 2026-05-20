@@ -207,6 +207,10 @@ export class ZwaveRuntimeService {
     return this.adapter.refreshNode(nodeId);
   }
 
+  public async reinterviewNode(nodeId: number): Promise<NodeDetail> {
+    return this.adapter.reinterviewNode(nodeId);
+  }
+
   public async getContactConfig(nodeId: number): Promise<ContactConfigRow[]> {
     return this.adapter.getContactConfig(nodeId);
   }

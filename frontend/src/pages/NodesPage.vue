@@ -26,6 +26,7 @@ const platform = usePlatformStore();
 
 const activeNodeId = ref<number | null>(null);
 const loadingNodeId = ref<number | null>(null);
+const loadingAction = ref<"read" | "reinterview" | null>(null);
 const readResults = ref<Record<number, SupportedCcReadResult>>({});
 const readErrors = ref<Record<number, string>>({});
 const copyFeedback = ref("");
@@ -146,6 +147,17 @@ function buildCopyText(nodeId: number, result: SupportedCcReadResult): string {
   return lines.join("\n");
 }
 
+function storeSupportedCommandClassResult(nodeId: number, detail: { commandClassDetails?: CommandClassSnapshot[]; commandClasses?: string[]; endpoints: EndpointSnapshot[] }): void {
+  readResults.value = {
+    ...readResults.value,
+    [nodeId]: {
+      commandClasses: normalizeCommandClasses(detail.commandClassDetails, detail.commandClasses),
+      endpoints: normalizeEndpoints(detail.endpoints),
+      readAt: new Date().toISOString(),
+    },
+  };
+}
+
 async function copySupportedCommandClasses(nodeId: number): Promise<void> {
   const result = getReadResult(nodeId);
   if (!result) {
@@ -179,6 +191,7 @@ async function copySupportedCommandClasses(nodeId: number): Promise<void> {
 async function readSupportedCommandClasses(nodeId: number): Promise<void> {
   activeNodeId.value = nodeId;
   loadingNodeId.value = nodeId;
+  loadingAction.value = "read";
   copyFeedback.value = "";
   readErrors.value = {
     ...readErrors.value,
@@ -187,14 +200,7 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
 
   try {
     const detail = await apiClient.readSupportedCommandClasses(nodeId);
-    readResults.value = {
-      ...readResults.value,
-      [nodeId]: {
-        commandClasses: normalizeCommandClasses(detail.commandClassDetails, detail.commandClasses),
-        endpoints: normalizeEndpoints(detail.endpoints),
-        readAt: new Date().toISOString(),
-      },
-    };
+    storeSupportedCommandClassResult(nodeId, detail);
   } catch (error) {
     readErrors.value = {
       ...readErrors.value,
@@ -203,6 +209,34 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
   } finally {
     if (loadingNodeId.value === nodeId) {
       loadingNodeId.value = null;
+      loadingAction.value = null;
+    }
+  }
+}
+
+async function reinterviewNode(nodeId: number): Promise<void> {
+  activeNodeId.value = nodeId;
+  loadingNodeId.value = nodeId;
+  loadingAction.value = "reinterview";
+  copyFeedback.value = "";
+  readErrors.value = {
+    ...readErrors.value,
+    [nodeId]: "",
+  };
+
+  try {
+    const detail = await apiClient.reinterviewNode(nodeId);
+    storeSupportedCommandClassResult(nodeId, detail);
+    await platform.refreshNodes().catch(() => undefined);
+  } catch (error) {
+    readErrors.value = {
+      ...readErrors.value,
+      [nodeId]: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    if (loadingNodeId.value === nodeId) {
+      loadingNodeId.value = null;
+      loadingAction.value = null;
     }
   }
 }
@@ -243,13 +277,22 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
               <td>{{ node.isSecure ? '安全' : '非安全' }}</td>
               <td>{{ node.status || node.interviewStage || '未知状态' }}</td>
               <td class="cc-action-cell">
-                <button
-                  class="ghost-button cc-read-button"
-                  :disabled="loadingNodeId === node.nodeId"
-                  @click="readSupportedCommandClasses(node.nodeId)"
-                >
-                  {{ loadingNodeId === node.nodeId ? '读取中...' : '读取支持 CC' }}
-                </button>
+                <div class="cc-action-buttons">
+                  <button
+                    class="ghost-button cc-read-button"
+                    :disabled="loadingNodeId === node.nodeId"
+                    @click="readSupportedCommandClasses(node.nodeId)"
+                  >
+                    {{ loadingNodeId === node.nodeId && loadingAction === 'read' ? '读取中...' : '读 CC' }}
+                  </button>
+                  <button
+                    class="ghost-button cc-read-button"
+                    :disabled="loadingNodeId === node.nodeId"
+                    @click="reinterviewNode(node.nodeId)"
+                  >
+                    {{ loadingNodeId === node.nodeId && loadingAction === 'reinterview' ? 'Interview 中...' : '重新 Interview' }}
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -288,8 +331,16 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
         <p v-if="copyFeedback" class="cc-copy-feedback">{{ copyFeedback }}</p>
 
         <div v-if="loadingNodeId === activeNodeId" class="cc-result-card">
-          <p class="cc-result-title">正在读取设备支持的 CC...</p>
-          <p class="cc-read-meta">请稍候，系统正在读取当前节点缓存，若 interview 尚未完成会等待完成后返回。</p>
+          <p class="cc-result-title">
+            {{ loadingAction === 'reinterview' ? '正在重新 Interview 节点...' : '正在读取设备支持的 CC...' }}
+          </p>
+          <p class="cc-read-meta">
+            {{
+              loadingAction === 'reinterview'
+                ? '请保持门锁唤醒或触发一次按键/开关锁，系统会重新询问安全 CC 列表并等待 interview 完成。'
+                : '请稍候，系统正在读取当前节点缓存，若 interview 尚未完成会等待完成后返回。'
+            }}
+          </p>
         </div>
 
         <div v-else-if="getReadError(activeNodeId)" class="cc-result-card cc-result-error">
@@ -341,7 +392,13 @@ async function readSupportedCommandClasses(nodeId: number): Promise<void> {
 
 <style scoped>
 .cc-action-cell {
-  width: 140px;
+  width: 220px;
+}
+
+.cc-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .cc-read-button {
