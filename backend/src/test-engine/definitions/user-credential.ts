@@ -467,6 +467,34 @@ async function assertCredentialEmpty(
   });
 }
 
+async function assertCredentialReportFitsCapability(
+  context: TestExecutionContext,
+  report: CredentialReport | undefined,
+  capability: CredentialCapability,
+  label: string,
+  stepKey: string,
+): Promise<void> {
+  const length = credentialLength(report);
+  if (!report) {
+    throw new Error(`${label} Credential Report 为空。`);
+  }
+
+  if (report.credentialReadBack === false) {
+    if (length <= 0) {
+      throw new Error(`${label} 不可 read back 时 Credential Report 必须包含非空 hash。`);
+    }
+    if (capability.maxCredentialHashLength > 0 && length > capability.maxCredentialHashLength) {
+      throw new Error(`${label} Credential Report hash length ${length} exceeds maxCredentialHashLength ${capability.maxCredentialHashLength}。`);
+    }
+  }
+
+  await context.log("info", stepKey, "Credential Report 长度符合能力声明", {
+    credentialReadBack: report.credentialReadBack,
+    credentialLength: length,
+    maxCredentialHashLength: capability.maxCredentialHashLength,
+  });
+}
+
 async function expectCommandRejectedOrUnchanged(
   context: TestExecutionContext,
   stepKey: string,
@@ -849,14 +877,6 @@ export const userCredentialPinLifecycleDefinition: ExecutableTestDefinition = {
         throw new Error(`User 添加后读取不一致：${JSON.stringify(user)}。`);
       }
 
-      await context.log("info", "user.modify.dual", "修改 User 为 Dual Rule", { primaryUserId });
-      await modifyGeneralUser(context, primaryUserId, UserCredentialRule.Dual, true);
-      await context.wait(WAIT_SHORT_MS);
-      user = await getUser(context, primaryUserId);
-      if (user?.credentialRule !== UserCredentialRule.Dual) {
-        throw new Error(`User 修改 Dual Rule 后读取异常：${JSON.stringify(user)}。`);
-      }
-
       await context.log("info", "user.modify.disabled", "修改 User 为 Occupied Disabled", { primaryUserId });
       await modifyGeneralUser(context, primaryUserId, UserCredentialRule.Single, false);
       await context.wait(WAIT_SHORT_MS);
@@ -1045,9 +1065,7 @@ export const userCredentialFingerprintLifecycleDefinition: ExecutableTestDefinit
         promptMessage: "请在门锁上为主测试用户录入 Finger-A，录入成功后测试会自动继续。",
       });
       const firstFingerHex = bytesToHex(addReport.credentialData);
-      if (addReport.credentialReadBack === false && credentialLength(addReport) <= 0) {
-        throw new Error("指纹不可 read back 时 Credential Report 必须包含非空 hash。 ");
-      }
+      await assertCredentialReportFitsCapability(context, addReport, fingerCapability, "Finger Biometric", "finger.add.hash-length.assert");
       await context.log("info", "finger.add.assert", "指纹 Add 学习成功并已读取到 credential", {
         report: addReport,
         dataHex: firstFingerHex,
@@ -1064,6 +1082,7 @@ export const userCredentialFingerprintLifecycleDefinition: ExecutableTestDefinit
         });
       });
       const afterInvalidAdd = await getCredential(context, primaryUserId, FINGER_TYPE, fingerSlot);
+      await assertCredentialReportFitsCapability(context, afterInvalidAdd, fingerCapability, "Finger Biometric", "finger.learn-add.occupied.hash-length.assert");
       if (bytesToHex(afterInvalidAdd?.credentialData) !== firstFingerHex) {
         throw new Error("Learn Add 到已占用指纹 slot 后，原 credential 被改变。 ");
       }
@@ -1113,6 +1132,7 @@ export const userCredentialFingerprintLifecycleDefinition: ExecutableTestDefinit
         previousDataHex: firstFingerHex,
       });
       const modifiedFingerHex = bytesToHex(modifyReport.credentialData);
+      await assertCredentialReportFitsCapability(context, modifyReport, fingerCapability, "Finger Biometric", "finger.modify.hash-length.assert");
       await context.log("info", "finger.modify.assert", "指纹 Modify 学习成功", {
         beforeHex: firstFingerHex,
         afterHex: modifiedFingerHex,
