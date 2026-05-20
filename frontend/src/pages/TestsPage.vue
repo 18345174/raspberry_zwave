@@ -26,6 +26,13 @@ interface DeviceSupportRecord {
   definitions: TestDefinition[];
 }
 
+interface DefinitionGroup {
+  key: string;
+  title: string;
+  description: string;
+  definitions: TestDefinition[];
+}
+
 interface ManualUnlockPrompt {
   runId: string;
   promptKey: string;
@@ -65,9 +72,78 @@ const reportStatusMessage = ref("");
 let supportLoadToken = 0;
 
 const TEST_DEFINITION_PRIORITY: Record<string, number> = {
-  "user-code-add": 0,
-  "user-code-edit": 1,
-  "user-code-delete": 2,
+  "basic-door-lock-mapping": 20,
+  "schedule-entry-lock-compliance": 40,
+  "transport-service-fragmentation": 60,
+  "association-group-info": 80,
+  "device-reset-locally-presence": 100,
+  "zwave-plus-info": 120,
+  "lock-basic": 140,
+  "door-lock-notification": 160,
+  "user-code-add": 180,
+  "user-code-edit": 181,
+  "user-code-delete": 182,
+  "supervision-command-status": 200,
+  "configuration-read-write": 220,
+  "manufacturer-specific-identity": 240,
+  "powerlevel-readonly": 260,
+  "firmware-update-metadata-readonly": 280,
+  "battery-health": 300,
+  "user-credential-capabilities": 320,
+  "user-credential-pin-lifecycle": 321,
+  "user-credential-password-lifecycle": 322,
+  "user-credential-fingerprint-lifecycle": 323,
+  "user-credential-checksum": 324,
+  "user-credential-admin-pin": 325,
+  "user-credential-negative": 326,
+  "user-credential-iteration": 327,
+  "user-credential-user-types": 328,
+  "user-credential-association": 329,
+  "association-lifeline": 340,
+  "version-info": 360,
+  "indicator-supported": 380,
+  "time-cc-read": 400,
+  "time-parameters-read": 420,
+  "multi-channel-association": 440,
+  "security-scheme": 460,
+};
+const DEFINITION_CC_GROUPS: Record<string, { key: string; title: string; description: string; order: number }> = {
+  "basic-door-lock-mapping": { key: "basic", title: "Basic CC (0x20)", description: "Basic Report 与门锁映射验证", order: 20 },
+  "schedule-entry-lock-compliance": { key: "schedule-entry-lock", title: "Schedule Entry Lock CC (0x4E)", description: "门锁用户计划表能力与 slot 读取", order: 40 },
+  "transport-service-fragmentation": { key: "transport-service", title: "Transport Service CC (0x55)", description: "长报文/分片传输链路验证", order: 60 },
+  "association-group-info": { key: "agi", title: "Association Group Information CC (0x59)", description: "Association group 名称、profile 与命令列表", order: 80 },
+  "device-reset-locally-presence": { key: "device-reset-locally", title: "Device Reset Locally CC (0x5A)", description: "本地恢复出厂通知能力，只读/高风险", order: 100 },
+  "zwave-plus-info": { key: "zwave-plus-info", title: "Z-Wave Plus Info CC (0x5E)", description: "Z-Wave Plus role、node type 与 icon", order: 120 },
+  "lock-basic": { key: "door-lock", title: "Door Lock CC (0x62)", description: "门锁状态、上锁/解锁与锁舌状态", order: 140 },
+  "door-lock-notification": { key: "notification", title: "Notification CC (0x71)", description: "Access Control 与门锁事件通知", order: 160 },
+  "user-code-add": { key: "user-code", title: "User Code CC (0x63)", description: "传统 PIN 槽位生命周期", order: 180 },
+  "user-code-edit": { key: "user-code", title: "User Code CC (0x63)", description: "传统 PIN 槽位生命周期", order: 180 },
+  "user-code-delete": { key: "user-code", title: "User Code CC (0x63)", description: "传统 PIN 槽位生命周期", order: 180 },
+  "supervision-command-status": { key: "supervision", title: "Supervision CC (0x6C)", description: "Set 类命令执行确认", order: 200 },
+  "configuration-read-write": { key: "configuration", title: "Configuration CC (0x70)", description: "配置参数读写与恢复", order: 220 },
+  "manufacturer-specific-identity": { key: "manufacturer-specific", title: "Manufacturer Specific CC (0x72)", description: "厂商和产品身份", order: 240 },
+  "powerlevel-readonly": { key: "powerlevel", title: "Powerlevel CC (0x73)", description: "射频功率只读/高风险恢复", order: 260 },
+  "firmware-update-metadata-readonly": { key: "firmware-update-md", title: "Firmware Update Meta Data CC (0x7A)", description: "OTA metadata 与 firmware target 能力", order: 280 },
+  "battery-health": { key: "battery", title: "Battery CC (0x80)", description: "电量和电池健康状态", order: 300 },
+  "user-credential-capabilities": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-pin-lifecycle": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-password-lifecycle": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-fingerprint-lifecycle": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-checksum": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-admin-pin": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-negative": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-iteration": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-user-types": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "user-credential-association": { key: "user-credential", title: "User Credential CC (0x83)", description: "PIN/Password/指纹/Admin PIN/Checksum/Association", order: 320 },
+  "association-lifeline": { key: "association", title: "Association CC (0x85)", description: "Lifeline 与 association group", order: 340 },
+  "version-info": { key: "version", title: "Version CC (0x86)", description: "协议、固件和 CC 版本", order: 360 },
+  "indicator-supported": { key: "indicator", title: "Indicator CC (0x87)", description: "指示灯/蜂鸣器能力", order: 380 },
+  "time-cc-read": { key: "time", title: "Time CC (0x8A)", description: "时间、日期与时区", order: 400 },
+  "time-parameters-read": { key: "time-parameters", title: "Time Parameters CC (0x8B)", description: "旧版时间参数读写", order: 420 },
+  "multi-channel-association": { key: "multi-channel-association", title: "Multi Channel Association CC (0x8E)", description: "多端点 association group", order: 440 },
+  "security-scheme": { key: "security", title: "Security / Security 2 CC (0x98 / 0x9F)", description: "安全加入等级与敏感 CC 安全上下文", order: 460 },
+  "node-health": { key: "node-health", title: "节点健康检查", description: "Ping 与 Lifeline health check", order: 900 },
+  "binary-switch-basic": { key: "binary-switch", title: "Binary Switch CC", description: "二进制开关设备测试", order: 910 },
 };
 const USER_CODE_ADD_KEY = "user-code-add";
 const USER_CODE_DEPENDENT_KEYS = new Set(["user-code-edit", "user-code-delete"]);
@@ -111,6 +187,30 @@ const selectedNodeDefinitions = computed(() => {
 
 const selectedDefinitions = computed(() => {
   return selectedNodeDefinitions.value.filter((definition) => selectedDefinitionIds.value.includes(definition.id));
+});
+
+const selectedDefinitionGroups = computed<DefinitionGroup[]>(() => {
+  const groups = new Map<string, DefinitionGroup & { order: number }>();
+
+  for (const definition of selectedNodeDefinitions.value) {
+    const groupMeta = getDefinitionGroupMeta(definition);
+    const existing = groups.get(groupMeta.key);
+    if (existing) {
+      existing.definitions.push(definition);
+      continue;
+    }
+    groups.set(groupMeta.key, {
+      key: groupMeta.key,
+      title: groupMeta.title,
+      description: groupMeta.description,
+      order: groupMeta.order,
+      definitions: [definition],
+    });
+  }
+
+  return [...groups.values()]
+    .sort((left, right) => left.order - right.order || left.title.localeCompare(right.title, "zh-CN"))
+    .map(({ order: _order, ...group }) => group);
 });
 
 const hasBlockingRun = computed(() => {
@@ -264,6 +364,15 @@ function describeNode(node: NodeSummary): string {
 
 function getDefinitionPriority(definition: TestDefinition): number {
   return TEST_DEFINITION_PRIORITY[definition.key] ?? 100;
+}
+
+function getDefinitionGroupMeta(definition: TestDefinition): { key: string; title: string; description: string; order: number } {
+  return DEFINITION_CC_GROUPS[definition.key] ?? {
+    key: definition.deviceType || "other",
+    title: definition.deviceType || "其他测试",
+    description: "未归类的测试项目",
+    order: 999,
+  };
 }
 
 function requiresUserCodeAdd(definition: TestDefinition): boolean {
@@ -1720,27 +1829,39 @@ async function skipActiveManualPrompt(): Promise<void> {
         <p class="panel-intro">可选择一个或多个测试项目，开始后会按选择顺序依次执行。</p>
         <p v-if="hasBlockingRun" class="warning-banner">当前已有测试任务正在执行，请等待当前任务结束后再开始。</p>
 
-        <div class="definition-checklist">
-          <label
-            v-for="definition in selectedNodeDefinitions"
-            :key="definition.id"
-            class="definition-option"
-            :class="{ 'definition-option-disabled': !isDefinitionSelectable(definition) }"
-            :data-disabled-tip="!isDefinitionSelectable(definition) ? '请先选择“添加 User Code”' : undefined"
-          >
-            <input
-              :checked="selectedDefinitionIds.includes(definition.id)"
-              :disabled="!isDefinitionSelectable(definition)"
-              type="checkbox"
-              @change="toggleDefinition(definition.id)"
-            />
-            <div class="definition-option-body">
-              <div class="definition-option-title-row">
-                <strong>{{ definition.name }}</strong>
-                <span class="definition-chip">{{ definition.deviceType }}</span>
+        <div class="definition-cc-groups">
+          <section v-for="group in selectedDefinitionGroups" :key="group.key" class="definition-cc-group">
+            <div class="definition-cc-group-header">
+              <div>
+                <strong>{{ group.title }}</strong>
+                <p>{{ group.description }}</p>
               </div>
+              <span>{{ group.definitions.length }} 项</span>
             </div>
-          </label>
+
+            <div class="definition-checklist">
+              <label
+                v-for="definition in group.definitions"
+                :key="definition.id"
+                class="definition-option"
+                :class="{ 'definition-option-disabled': !isDefinitionSelectable(definition) }"
+                :data-disabled-tip="!isDefinitionSelectable(definition) ? '请先选择“添加 User Code”' : undefined"
+              >
+                <input
+                  :checked="selectedDefinitionIds.includes(definition.id)"
+                  :disabled="!isDefinitionSelectable(definition)"
+                  type="checkbox"
+                  @change="toggleDefinition(definition.id)"
+                />
+                <div class="definition-option-body">
+                  <div class="definition-option-title-row">
+                    <strong>{{ definition.name }}</strong>
+                    <span class="definition-chip">{{ definition.deviceType }}</span>
+                  </div>
+                </div>
+              </label>
+            </div>
+          </section>
         </div>
 
         <div class="action-footer">
@@ -1962,8 +2083,49 @@ async function skipActiveManualPrompt(): Promise<void> {
   gap: 14px;
 }
 
+.definition-cc-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.definition-cc-group {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.definition-cc-group-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.definition-cc-group-header strong {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.definition-cc-group-header p {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+
+.definition-cc-group-header span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+}
+
 .stage-panel-definitions .definition-checklist {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: stretch;
 }
 
@@ -2289,7 +2451,7 @@ async function skipActiveManualPrompt(): Promise<void> {
   }
 
   .stage-panel-definitions .definition-checklist {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .device-table-row span:nth-child(5),
@@ -2304,6 +2466,7 @@ async function skipActiveManualPrompt(): Promise<void> {
   .selection-summary-card,
   .execution-header-card,
   .action-footer,
+  .definition-cc-group-header,
   .execution-item-header,
   .step-content-header {
     grid-template-columns: 1fr;

@@ -1,5 +1,25 @@
 import type { ExecutableTestDefinition } from "./types.js";
 import { binarySwitchDefinition } from "./definitions/binary-switch.js";
+import {
+  associationDefinition,
+  associationGroupInfoDefinition,
+  basicDoorLockMappingDefinition,
+  batteryHealthDefinition,
+  deviceResetLocallyDefinition,
+  firmwareMetadataDefinition,
+  indicatorDefinition,
+  manufacturerSpecificDefinition,
+  multiChannelAssociationDefinition,
+  powerlevelDefinition,
+  scheduleEntryLockDefinition,
+  securitySchemeDefinition,
+  supervisionDefinition,
+  timeDefinition,
+  timeParametersDefinition,
+  transportServiceDefinition,
+  versionInfoDefinition,
+  zwavePlusInfoDefinition,
+} from "./definitions/cc-compliance.js";
 import { configurationReadWriteDefinition } from "./definitions/configuration-read-write.js";
 import { doorLockNotificationDefinition } from "./definitions/door-lock-notification.js";
 import { lockBasicDefinition } from "./definitions/lock-basic.js";
@@ -19,8 +39,15 @@ import {
 } from "./definitions/user-credential.js";
 
 export const executableDefinitions: ExecutableTestDefinition[] = [
+  basicDoorLockMappingDefinition,
+  scheduleEntryLockDefinition,
+  transportServiceDefinition,
+  associationGroupInfoDefinition,
+  deviceResetLocallyDefinition,
+  zwavePlusInfoDefinition,
   lockBasicDefinition,
   doorLockNotificationDefinition,
+  supervisionDefinition,
   userCodeAddDefinition,
   userCodeEditDefinition,
   userCodeDeleteDefinition,
@@ -34,6 +61,17 @@ export const executableDefinitions: ExecutableTestDefinition[] = [
   userCredentialIterationDefinition,
   userCredentialUserTypeDefinition,
   userCredentialAssociationDefinition,
+  manufacturerSpecificDefinition,
+  powerlevelDefinition,
+  firmwareMetadataDefinition,
+  batteryHealthDefinition,
+  associationDefinition,
+  versionInfoDefinition,
+  indicatorDefinition,
+  timeDefinition,
+  timeParametersDefinition,
+  multiChannelAssociationDefinition,
+  securitySchemeDefinition,
   configurationReadWriteDefinition,
   binarySwitchDefinition,
   nodeHealthDefinition,
