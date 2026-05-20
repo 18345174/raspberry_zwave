@@ -248,10 +248,33 @@ function assertDailyRepeatingSchedule(schedule: unknown, label: string): void {
   }
 }
 
-function compareLocalDeviceTime(date: AnyRecord, time: AnyRecord): { differenceMs: number; differenceMinutes: number } {
-  const deviceTime = new Date(Number(date.year), Number(date.month) - 1, Number(date.day), Number(time.hour), Number(time.minute), Number(time.second));
-  const differenceMs = Math.abs(Date.now() - deviceTime.getTime());
-  return { differenceMs, differenceMinutes: Math.round(differenceMs / 60000) };
+function compareDeviceTime(date: AnyRecord, time: AnyRecord, timezone?: AnyRecord): {
+  best: { interpretation: string; differenceMs: number; differenceMinutes: number };
+  candidates: Array<{ interpretation: string; differenceMs: number; differenceMinutes: number }>;
+} {
+  const now = Date.now();
+  const candidates = [];
+  const asControllerLocal = new Date(Number(date.year), Number(date.month) - 1, Number(date.day), Number(time.hour), Number(time.minute), Number(time.second));
+  const localDifferenceMs = Math.abs(now - asControllerLocal.getTime());
+  candidates.push({
+    interpretation: "reported-as-controller-local-time",
+    differenceMs: localDifferenceMs,
+    differenceMinutes: Math.round(localDifferenceMs / 60000),
+  });
+
+  // Some locks report Time CC date/time in UTC and publish the local offset separately.
+  if (timezone && optionalNumber(timezone.standardOffset) != undefined) {
+    const asUtc = Date.UTC(Number(date.year), Number(date.month) - 1, Number(date.day), Number(time.hour), Number(time.minute), Number(time.second));
+    const utcDifferenceMs = Math.abs(now - asUtc);
+    candidates.push({
+      interpretation: "reported-as-utc-with-time-offset",
+      differenceMs: utcDifferenceMs,
+      differenceMinutes: Math.round(utcDifferenceMs / 60000),
+    });
+  }
+
+  const best = [...candidates].sort((left, right) => left.differenceMs - right.differenceMs)[0];
+  return { best, candidates };
 }
 
 function normalizeBasicReport(raw: unknown): BasicReportSnapshot {
@@ -867,13 +890,21 @@ export const scheduleEntryLockTimeDependencyDefinition: ExecutableTestDefinition
     ]);
     assertTimeRecord(time, "Time CC time");
     assertDateRecord(date, "Time CC date");
-    const drift = compareLocalDeviceTime(date as AnyRecord, time as AnyRecord);
-    if (Number.isFinite(maxDriftMinutes) && drift.differenceMinutes > maxDriftMinutes) {
-      throw new Error(`设备 Time CC 本地时间与控制器时间偏差约 ${drift.differenceMinutes} 分钟，超过 ${maxDriftMinutes} 分钟。`);
-    }
     if (isRecord(timeTimezone)) {
       assertTimezoneOffset(timeTimezone.standardOffset, "Time CC standardOffset");
       assertTimezoneOffset(timeTimezone.dstOffset, "Time CC dstOffset");
+    }
+    const drift = compareDeviceTime(date as AnyRecord, time as AnyRecord, isRecord(timeTimezone) ? timeTimezone : undefined);
+    if (Number.isFinite(maxDriftMinutes) && drift.best.differenceMinutes > maxDriftMinutes) {
+      throw new Error(`设备 Time CC 时间与控制器时间最小偏差约 ${drift.best.differenceMinutes} 分钟，超过 ${maxDriftMinutes} 分钟。`);
+    }
+    if (drift.best.interpretation === "reported-as-utc-with-time-offset") {
+      await context.log("info", "time.utc-offset", "Time CC 时间按 UTC + Time Offset 解释后与控制器时间一致。", {
+        time,
+        date,
+        timeTimezone,
+        drift,
+      });
     }
     if (isRecord(scheduleTimezone)) {
       assertTimezoneOffset(scheduleTimezone.standardOffset, "Schedule Entry Lock standardOffset");
