@@ -17,6 +17,7 @@ export interface AppConfig {
   logDir: string;
   zwaveCacheDir: string;
   zwaveDeviceConfigDir?: string;
+  zwaveReinterviewTimeoutMs: number;
   debugApiEnabled: boolean;
   apiToken?: string;
   securityKeys: Partial<Record<SecurityKeyName, string>>;
@@ -56,6 +57,19 @@ function booleanEnv(name: string, fallback: boolean): boolean {
     return fallback;
   }
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function numberEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Invalid numeric environment variable ${name}: ${raw}`);
+  }
+  return value;
 }
 
 function ensureDirectory(dirPath: string): string {
@@ -119,6 +133,7 @@ export function loadAppConfig(): AppConfig {
     logDir,
     zwaveCacheDir,
     zwaveDeviceConfigDir: optional("ZWAVE_DEVICE_CONFIG_DIR"),
+    zwaveReinterviewTimeoutMs: numberEnv("ZWAVE_REINTERVIEW_TIMEOUT_MS", 1_800_000),
     debugApiEnabled: booleanEnv("DEBUG_API_ENABLED", false),
     apiToken: optional("API_TOKEN"),
     securityKeys,

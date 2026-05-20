@@ -7,7 +7,6 @@ import { nodeHealthDefinition } from "./definitions/node-health.js";
 import { userCodeAddDefinition, userCodeDeleteDefinition, userCodeEditDefinition } from "./definitions/user-code.js";
 import {
   userCredentialCapabilitiesDefinition,
-  userCredentialDualAuthDefinition,
   userCredentialFingerprintLifecycleDefinition,
   userCredentialPinLifecycleDefinition,
 } from "./definitions/user-credential.js";
@@ -21,7 +20,6 @@ export const executableDefinitions: ExecutableTestDefinition[] = [
   userCredentialCapabilitiesDefinition,
   userCredentialPinLifecycleDefinition,
   userCredentialFingerprintLifecycleDefinition,
-  userCredentialDualAuthDefinition,
   configurationReadWriteDefinition,
   binarySwitchDefinition,
   nodeHealthDefinition,

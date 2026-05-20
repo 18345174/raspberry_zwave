@@ -47,6 +47,7 @@
 ## 配置补充
 
 - `ZWAVE_KEY_*`：S2 / S0 安全入网所需的 16-byte hex key
+- `ZWAVE_REINTERVIEW_TIMEOUT_MS`：手动重新 Interview 最长等待时间，默认 `1800000`（30 分钟），适合 User Code 槽位很多的门锁
 - `API_TOKEN`：可选；配置后可直接作为静态运维 Token 使用
 - `ADMIN_USERNAME` + `ADMIN_PASSWORD` / `ADMIN_PASSWORD_HASH`：启用正式登录会话
 - `AUTH_SESSION_TTL_HOURS`：浏览器登录会话有效期

@@ -59,7 +59,6 @@ type MutableFirmwareUpdateSession = FirmwareUpdateStatus & {
 };
 
 const SUPPORTED_CC_READ_TIMEOUT_MS = 30_000;
-const NODE_REINTERVIEW_TIMEOUT_MS = 180_000;
 
 export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   private readonly serialDiscovery = new SerialDiscoveryService();
@@ -380,7 +379,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       throw new Error("The controller node cannot be re-interviewed.");
     }
     if (!this.isNodeInterviewComplete(node)) {
-      await this.waitForNodeInterviewCompletion(node, NODE_REINTERVIEW_TIMEOUT_MS);
+      await this.waitForNodeInterviewCompletion(node, this.appConfig.zwaveReinterviewTimeoutMs, "Node interview");
       return this.toNodeDetail(node);
     }
 
@@ -388,10 +387,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.log("info", "[node] Re-interview requested", {
       nodeId,
       waitForWakeup: false,
+      timeoutMs: this.appConfig.zwaveReinterviewTimeoutMs,
     });
 
     await node.refreshInfo({ waitForWakeup: false });
-    await this.waitForNodeInterviewCompletion(node, NODE_REINTERVIEW_TIMEOUT_MS);
+    await this.waitForNodeInterviewCompletion(node, this.appConfig.zwaveReinterviewTimeoutMs, "Node re-interview");
 
     const detail = this.toNodeDetail(node);
     this.publish({ type: "zwave.node.updated", payload: detail });
@@ -406,7 +406,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
 
     if (!this.isNodeInterviewComplete(node)) {
-      await this.waitForNodeInterviewCompletion(node, SUPPORTED_CC_READ_TIMEOUT_MS);
+      await this.waitForNodeInterviewCompletion(node, SUPPORTED_CC_READ_TIMEOUT_MS, "Node interview");
     }
 
     return this.toNodeDetail(node);
@@ -1237,7 +1237,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     return Boolean(node?.ready) || String(node?.interviewStage ?? "").toLowerCase() === "complete";
   }
 
-  private waitForNodeInterviewCompletion(node: any, timeoutMs: number): Promise<void> {
+  private waitForNodeInterviewCompletion(node: any, timeoutMs: number, label = "Node interview"): Promise<void> {
     if (this.isNodeInterviewComplete(node)) {
       return Promise.resolve();
     }
@@ -1262,7 +1262,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
 
       const timeout = setTimeout(() => {
         cleanup();
-        reject(new Error("Node interview is still in progress. Please wait for interview completion and try again."));
+        reject(new Error(`${label} is still in progress after ${Math.round(timeoutMs / 1000)} seconds. Keep the device awake and try again.`));
       }, timeoutMs);
 
       node.once?.("interview completed", handleCompleted);

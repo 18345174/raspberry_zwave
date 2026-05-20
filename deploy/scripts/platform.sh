@@ -19,6 +19,7 @@ DEBUG_API_ENABLED=${DEBUG_API_ENABLED:-false}
 API_TOKEN=${API_TOKEN:-}
 ZWAVE_CACHE_DIR=${ZWAVE_CACHE_DIR:-$DATA_DIR/zwave}
 ZWAVE_DEVICE_CONFIG_DIR=${ZWAVE_DEVICE_CONFIG_DIR:-}
+ZWAVE_REINTERVIEW_TIMEOUT_MS=${ZWAVE_REINTERVIEW_TIMEOUT_MS:-1800000}
 ZWAVE_KEY_S0_LEGACY=${ZWAVE_KEY_S0_LEGACY:-}
 ZWAVE_KEY_S2_UNAUTHENTICATED=${ZWAVE_KEY_S2_UNAUTHENTICATED:-}
 ZWAVE_KEY_S2_AUTHENTICATED=${ZWAVE_KEY_S2_AUTHENTICATED:-}
@@ -71,6 +72,7 @@ Useful environment variables:
   API_TOKEN               Optional static API token written into backend/.env
   DEBUG_API_ENABLED       Whether debug APIs are enabled in backend/.env. Default: false
   AUTH_SESSION_TTL_HOURS  Browser login session duration. Default: 24
+  ZWAVE_REINTERVIEW_TIMEOUT_MS  Max wait for manual node re-interview. Default: 1800000
   FRONTEND_SERVICE_NAME   Optional separate frontend systemd service name for restart mode
   FRONTEND_PORT           Optional frontend port to inspect in restart mode. Default: 5173
   ENV_FILE                backend .env path. Default: repo backend/.env, fallback to APP_DIR/backend/.env
@@ -379,6 +381,7 @@ DATA_DIR=$DATA_DIR
 LOG_DIR=$LOG_DIR
 ZWAVE_CACHE_DIR=$ZWAVE_CACHE_DIR
 ZWAVE_DEVICE_CONFIG_DIR=$ZWAVE_DEVICE_CONFIG_DIR
+ZWAVE_REINTERVIEW_TIMEOUT_MS=$ZWAVE_REINTERVIEW_TIMEOUT_MS
 DEBUG_API_ENABLED=$DEBUG_API_ENABLED
 API_TOKEN=$API_TOKEN
 ZWAVE_KEY_S0_LEGACY=$ZWAVE_KEY_S0_LEGACY

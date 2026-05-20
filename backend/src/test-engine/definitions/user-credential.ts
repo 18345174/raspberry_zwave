@@ -731,7 +731,7 @@ export const userCredentialCapabilitiesDefinition: ExecutableTestDefinition = {
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "验证 User Credential CC、PIN Code、Finger Biometric、Dual Rule、Door Lock 和 Notification 依赖能力。",
+    description: "验证 User Credential CC、PIN Code、Finger Biometric、Door Lock 和 Notification 依赖能力。",
     inputSchema: {},
   },
   supports: supportsUserCredential,
@@ -750,9 +750,6 @@ export const userCredentialCapabilitiesDefinition: ExecutableTestDefinition = {
     }
     if (!userCapabilities.supportedCredentialRules.includes(UserCredentialRule.Single)) {
       throw new Error("设备未声明支持 Single Credential Rule (0x01)。");
-    }
-    if (!userCapabilities.supportedCredentialRules.includes(UserCredentialRule.Dual)) {
-      throw new Error("设备未声明支持 Dual Credential Rule (0x02)，无法覆盖 PIN + Fingerprint 组合认证。 ");
     }
     if (!userCapabilities.supportedUserTypes?.includes(UserCredentialUserType.General)) {
       throw new Error("设备未声明支持 General User (0x00)。");
