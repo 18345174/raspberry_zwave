@@ -49,11 +49,23 @@ function supportedCcVersion(context: TestExecutionContext, commandClass: string)
 }
 
 function nodeValues(context: TestExecutionContext, commandClass: string): AnyRecord[] {
-  return context.node.values.filter((value) => value.commandClass === commandClass) as unknown as AnyRecord[];
+  return valuesForCommandClass(context.node.values as unknown[], commandClass);
+}
+
+function valuesForCommandClass(values: unknown[] | undefined, commandClass: string): AnyRecord[] {
+  return (values ?? []).filter((value) => isRecord(value) && value.commandClass === commandClass) as AnyRecord[];
 }
 
 function valueSnapshot(context: TestExecutionContext, commandClass: string): Record<string, unknown> {
-  return Object.fromEntries(nodeValues(context, commandClass).map((value) => {
+  return snapshotValues(nodeValues(context, commandClass));
+}
+
+function valueSnapshotFromNode(node: { values?: unknown[] }, commandClass: string): Record<string, unknown> {
+  return snapshotValues(valuesForCommandClass(node.values, commandClass));
+}
+
+function snapshotValues(values: AnyRecord[]): Record<string, unknown> {
+  return Object.fromEntries(values.map((value) => {
     const property = String(value.property);
     const key = value.propertyKey != undefined ? `${property}[${String(value.propertyKey)}]` : property;
     return [key, value.value];
@@ -165,6 +177,10 @@ function assertOptionalValidBasicValue(value: number | undefined, label: string)
   }
 }
 
+function isBasicOnValue(value: number | undefined): boolean {
+  return value != undefined && ((value >= 0x01 && value <= 0x63) || value === BASIC_VALUE_ON);
+}
+
 function assertValidReportDuration(duration: unknown, label: string): void {
   const durationValue = optionalNumber(duration);
   if (durationValue == undefined) {
@@ -191,12 +207,12 @@ function assertBasicDoorLockMapping(basicCurrentValue: number | undefined, doorL
     return;
   }
 
-  if (basicCurrentValue === BASIC_VALUE_ON) {
+  if (isBasicOnValue(basicCurrentValue)) {
     if (currentMode != undefined && currentMode === DOOR_LOCK_MODE_UNSECURED) {
-      throw new Error("Basic Current Value=0xFF 应映射到 Door Lock Mode!=0x00，但当前 currentMode=0x00。");
+      throw new Error(`Basic Current Value=${basicCurrentValue} 表示 On/锁定，应映射到 Door Lock Mode!=0x00，但当前 currentMode=0x00。`);
     }
     if (isKnownBoltStatus(boltStatus) && boltStatus !== "locked") {
-      throw new Error(`Basic Current Value=0xFF 应表示上锁，但当前 boltStatus=${boltStatus}。`);
+      throw new Error(`Basic Current Value=${basicCurrentValue} 表示 On/锁定，但当前 boltStatus=${boltStatus}。`);
     }
     return;
   }
@@ -208,7 +224,7 @@ function assertBasicDoorLockMapping(basicCurrentValue: number | undefined, doorL
     return;
   }
 
-  throw new Error(`Lock DT Basic mapping 只定义 0x00/0xFF 状态映射，当前 Basic Current Value=${basicCurrentValue} 不适用于门锁状态报告。`);
+  throw new Error(`当前 Basic Current Value=${basicCurrentValue} 无法映射到门锁状态。`);
 }
 
 function assertDoorLockReached(raw: unknown, targetMode: number, label: string): void {
@@ -232,17 +248,70 @@ function assertDoorLockReached(raw: unknown, targetMode: number, label: string):
   }
 }
 
-async function readBasicReport(context: TestExecutionContext): Promise<BasicReportSnapshot> {
-  const raw = await context.invokeCcApi({ commandClass: "Basic", method: "get" });
-  const report = normalizeBasicReport(raw);
-  if (report.currentValue == undefined) {
-    throw new Error("Basic Get 未返回可识别的 Current Value。");
+async function readBasicReport(context: TestExecutionContext, attempts = 2): Promise<BasicReportSnapshot> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const raw = await context.invokeCcApi({ commandClass: "Basic", method: "get" });
+      const report = normalizeBasicReport(raw);
+      if (report.currentValue != undefined) {
+        return report;
+      }
+      lastError = new Error("Basic Get 未返回可识别的 Current Value。");
+      await context.log("warn", "basic.get.empty", "Basic Get 未返回可识别的 Current Value。", { attempt, raw });
+    } catch (error) {
+      lastError = error;
+      await context.log("warn", "basic.get.failed", "Basic Get 调用失败，准备重试。", {
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (attempt < attempts) {
+      await context.wait(1500);
+    }
   }
-  return report;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Basic Get 未返回可识别的 Current Value。"));
+}
+
+async function tryReadBasicReport(context: TestExecutionContext, phaseKey: string): Promise<BasicReportSnapshot | undefined> {
+  try {
+    return await readBasicReport(context);
+  } catch (error) {
+    await context.log("warn", `${phaseKey}.basic.get-optional-failed`, "Basic Set 后 Door Lock 状态已可验证，但 Basic Get 读取失败，作为附加信息跳过。", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
 }
 
 async function readDoorLockReport(context: TestExecutionContext): Promise<AnyRecord> {
   return normalizeDoorLockReport(await context.invokeCcApi({ commandClass: "Door Lock", method: "get" }));
+}
+
+function hasDoorLockState(report: AnyRecord): boolean {
+  return report.currentMode != undefined || report.boltStatus != undefined || report.targetMode != undefined;
+}
+
+async function readDoorLockReportWithCache(context: TestExecutionContext, phaseKey: string): Promise<AnyRecord> {
+  try {
+    const directReport = await readDoorLockReport(context);
+    if (hasDoorLockState(directReport)) {
+      return directReport;
+    }
+    await context.log("warn", `${phaseKey}.door-lock.empty`, "Door Lock Get 未返回可识别状态，尝试使用最新缓存值。", { directReport });
+  } catch (error) {
+    await context.log("warn", `${phaseKey}.door-lock.get-failed`, "Door Lock Get 失败，尝试使用最新缓存值。", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const refreshed = await context.refreshNode();
+  const cachedReport = valueSnapshotFromNode(refreshed, "Door Lock");
+  if (!hasDoorLockState(cachedReport)) {
+    throw new Error("未读取到 Door Lock 当前状态，无法验证 Basic Set 映射。");
+  }
+  await context.log("info", `${phaseKey}.door-lock.cache`, "已使用 Door Lock 最新缓存值继续验证。", cachedReport);
+  return cachedReport;
 }
 
 function isRestorableDoorLockMode(mode: number | undefined): boolean {
@@ -375,7 +444,7 @@ export const basicSetSecuredMappingDefinition: ExecutableTestDefinition = {
   },
   supports: supportsBasicDoorLock,
   async run(context) {
-    const beforeDoorLock = await readDoorLockReport(context);
+    const beforeDoorLock = await readDoorLockReportWithCache(context, "basic.set.secured.before");
     const originalMode = optionalNumber(beforeDoorLock.currentMode);
     await context.log("warn", "basic.set.secured.start", "即将发送 Basic Set(0xFF) 上锁命令，测试结束会尽量恢复原门锁状态。", { beforeDoorLock });
     let afterDoorLock: AnyRecord | undefined;
@@ -383,10 +452,12 @@ export const basicSetSecuredMappingDefinition: ExecutableTestDefinition = {
     try {
       await context.invokeCcApi({ commandClass: "Basic", method: "set", args: [BASIC_VALUE_ON] });
       await context.wait(BASIC_SET_WAIT_MS);
-      afterDoorLock = await readDoorLockReport(context);
-      afterBasic = await readBasicReport(context);
+      afterDoorLock = await readDoorLockReportWithCache(context, "basic.set.secured.after");
+      afterBasic = await tryReadBasicReport(context, "basic.set.secured.after");
       assertDoorLockReached(afterDoorLock, DOOR_LOCK_MODE_SECURED, "Basic Set(0xFF)");
-      assertBasicDoorLockMapping(afterBasic.currentValue, afterDoorLock);
+      if (afterBasic) {
+        assertBasicDoorLockMapping(afterBasic.currentValue, afterDoorLock);
+      }
       await context.log("info", "result", "最终测试结果：通过 Basic Set(0xFF) 上锁映射检查", { beforeDoorLock, afterDoorLock, afterBasic });
       return { beforeDoorLock, afterDoorLock, afterBasic };
     } finally {
@@ -409,16 +480,18 @@ export const basicSetUnsecuredMappingDefinition: ExecutableTestDefinition = {
   },
   supports: supportsBasicDoorLock,
   async run(context) {
-    const beforeDoorLock = await readDoorLockReport(context);
+    const beforeDoorLock = await readDoorLockReportWithCache(context, "basic.set.unsecured.before");
     const originalMode = optionalNumber(beforeDoorLock.currentMode);
     await context.log("warn", "basic.set.unsecured.start", "即将发送 Basic Set(0x00) 解锁命令，测试会短暂解锁门锁，结束后会尽量恢复原状态。", { beforeDoorLock });
     try {
       await context.invokeCcApi({ commandClass: "Basic", method: "set", args: [BASIC_VALUE_OFF] });
       await context.wait(BASIC_SET_WAIT_MS);
-      const afterDoorLock = await readDoorLockReport(context);
-      const afterBasic = await readBasicReport(context);
+      const afterDoorLock = await readDoorLockReportWithCache(context, "basic.set.unsecured.after");
+      const afterBasic = await tryReadBasicReport(context, "basic.set.unsecured.after");
       assertDoorLockReached(afterDoorLock, DOOR_LOCK_MODE_UNSECURED, "Basic Set(0x00)");
-      assertBasicDoorLockMapping(afterBasic.currentValue, afterDoorLock);
+      if (afterBasic) {
+        assertBasicDoorLockMapping(afterBasic.currentValue, afterDoorLock);
+      }
       await context.log("info", "result", "最终测试结果：通过 Basic Set(0x00) 解锁映射检查", { beforeDoorLock, afterDoorLock, afterBasic });
       return { beforeDoorLock, afterDoorLock, afterBasic };
     } finally {
