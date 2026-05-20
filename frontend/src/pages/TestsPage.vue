@@ -390,6 +390,20 @@ function getExecutionRun(item: ExecutionItem): TestRunRecord | undefined {
   return platform.runs.find((run) => run.id === item.runId);
 }
 
+function getRunFailureMessage(run: TestRunRecord | undefined): string {
+  const resultError = run?.resultJson?.error;
+  if (typeof resultError === "string" && resultError.trim()) {
+    return resultError.trim();
+  }
+
+  const summaryMessage = run?.summaryJson?.message;
+  if (typeof summaryMessage === "string" && summaryMessage.trim()) {
+    return summaryMessage.trim();
+  }
+
+  return "";
+}
+
 function appendExecutionSummaryLog(item: ExecutionItem, logs: TestLogRecord[]): TestLogRecord[] {
   const status = getExecutionItemStatus(item);
   if (status !== "failed" && status !== "cancelled" && status !== "blocked") {
@@ -397,12 +411,13 @@ function appendExecutionSummaryLog(item: ExecutionItem, logs: TestLogRecord[]): 
   }
 
   const lastLog = logs.at(-1);
-  if (!lastLog || lastLog.level === "error" || lastLog.stepKey === "execution.summary") {
+  if (lastLog?.stepKey === "execution.summary") {
     return logs;
   }
 
   const run = getExecutionRun(item);
-  let message = "测试失败，请结合上方步骤与后端日志排查。";
+  const failureMessage = getRunFailureMessage(run);
+  let message = failureMessage ? `测试失败：${failureMessage}` : "测试失败，请结合上方步骤与后端日志排查。";
   let level: TestLogRecord["level"] = "error";
 
   if (status === "cancelled") {
@@ -414,10 +429,14 @@ function appendExecutionSummaryLog(item: ExecutionItem, logs: TestLogRecord[]): 
     message = `创建测试任务失败：${item.submissionError}`;
   }
 
+  if (logs.some((log) => log.level === level && log.message === message)) {
+    return logs;
+  }
+
   return [...logs, {
     id: `${item.runId ?? item.definition.id}-execution.summary`,
     testRunId: item.runId ?? "",
-    timestamp: run?.finishedAt ?? lastLog.timestamp,
+    timestamp: run?.finishedAt ?? lastLog?.timestamp ?? new Date().toISOString(),
     level,
     stepKey: "execution.summary",
     message,
@@ -783,7 +802,8 @@ function getPlaceholderStepMessage(item: ExecutionItem): string {
     if (!item.runId && item.submissionError) {
       return `创建测试任务失败：${item.submissionError}`;
     }
-    return "测试失败，等待日志同步";
+    const failureMessage = getRunFailureMessage(getExecutionRun(item));
+    return failureMessage ? `测试失败：${failureMessage}` : "测试失败，等待日志同步";
   }
   return "测试完成";
 }

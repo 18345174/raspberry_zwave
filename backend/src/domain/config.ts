@@ -19,6 +19,7 @@ export interface AppConfig {
   zwaveDeviceConfigDir?: string;
   zwaveReinterviewTimeoutMs: number;
   debugApiEnabled: boolean;
+  httpRequestLogsEnabled: boolean;
   apiToken?: string;
   securityKeys: Partial<Record<SecurityKeyName, string>>;
   auth: AuthConfig;
@@ -135,6 +136,7 @@ export function loadAppConfig(): AppConfig {
     zwaveDeviceConfigDir: optional("ZWAVE_DEVICE_CONFIG_DIR"),
     zwaveReinterviewTimeoutMs: numberEnv("ZWAVE_REINTERVIEW_TIMEOUT_MS", 1_800_000),
     debugApiEnabled: booleanEnv("DEBUG_API_ENABLED", false),
+    httpRequestLogsEnabled: booleanEnv("HTTP_REQUEST_LOGS_ENABLED", false),
     apiToken: optional("API_TOKEN"),
     securityKeys,
     auth: {

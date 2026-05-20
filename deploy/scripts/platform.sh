@@ -16,6 +16,7 @@ PORT=${PORT:-8080}
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-123456}
 DEBUG_API_ENABLED=${DEBUG_API_ENABLED:-false}
+HTTP_REQUEST_LOGS_ENABLED=${HTTP_REQUEST_LOGS_ENABLED:-false}
 API_TOKEN=${API_TOKEN:-}
 ZWAVE_CACHE_DIR=${ZWAVE_CACHE_DIR:-$DATA_DIR/zwave}
 ZWAVE_DEVICE_CONFIG_DIR=${ZWAVE_DEVICE_CONFIG_DIR:-}
@@ -71,6 +72,7 @@ Useful environment variables:
   ADMIN_PASSWORD          Default login password when running deploy. Default: 123456
   API_TOKEN               Optional static API token written into backend/.env
   DEBUG_API_ENABLED       Whether debug APIs are enabled in backend/.env. Default: false
+  HTTP_REQUEST_LOGS_ENABLED  Whether Fastify request/response logs are enabled. Default: false
   AUTH_SESSION_TTL_HOURS  Browser login session duration. Default: 24
   ZWAVE_REINTERVIEW_TIMEOUT_MS  Max wait for manual node re-interview. Default: 1800000
   FRONTEND_SERVICE_NAME   Optional separate frontend systemd service name for restart mode
@@ -383,6 +385,7 @@ ZWAVE_CACHE_DIR=$ZWAVE_CACHE_DIR
 ZWAVE_DEVICE_CONFIG_DIR=$ZWAVE_DEVICE_CONFIG_DIR
 ZWAVE_REINTERVIEW_TIMEOUT_MS=$ZWAVE_REINTERVIEW_TIMEOUT_MS
 DEBUG_API_ENABLED=$DEBUG_API_ENABLED
+HTTP_REQUEST_LOGS_ENABLED=$HTTP_REQUEST_LOGS_ENABLED
 API_TOKEN=$API_TOKEN
 ZWAVE_KEY_S0_LEGACY=$ZWAVE_KEY_S0_LEGACY
 ZWAVE_KEY_S2_UNAUTHENTICATED=$ZWAVE_KEY_S2_UNAUTHENTICATED
