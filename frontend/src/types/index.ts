@@ -163,11 +163,19 @@ export interface TestDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+export type TestRunStatus =
+  | "queued"
+  | "running"
+  | "passed"
+  | "skipped"
+  | "failed"
+  | "cancelled";
+
 export interface TestRunRecord {
   id: string;
   testDefinitionId: string;
   nodeId: number;
-  status: string;
+  status: TestRunStatus;
   startedAt?: string;
   finishedAt?: string;
   durationMs?: number;

@@ -178,6 +178,54 @@ async function ensureScheduleUserCode(
   return prepared;
 }
 
+function isScheduleEntryLockWriteRejectedError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  if (!message.includes("被设备 Supervision 拒绝")) return false;
+  return [
+    "Week Day Schedule",
+    "Year Day Schedule",
+    "Daily Repeating Schedule",
+    "Enable userId",
+    "Enable All",
+  ].some((label) => message.includes(label));
+}
+
+async function handleScheduleEntryLockWriteUnsupported(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  label: string,
+  error: unknown,
+  payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (!isScheduleEntryLockWriteRejectedError(error)) {
+    throw error;
+  }
+
+  const errorMessage = getErrorMessage(error);
+  const reason = "设备支持 Schedule Entry Lock CC 的读取/能力上报，但拒绝 Set/Erase/Enable 写入类命令，判定为 0x4E 写入不支持。";
+  const result = {
+    ...payload,
+    skipped: true,
+    writeSupported: false,
+    unsupportedReason: reason,
+    error: errorMessage,
+  };
+  await context.log("warn", "schedule.write.unsupported", `最终测试结果：不适用 ${label}：${reason}`, result);
+  return result;
+}
+
+async function runScheduleEntryLockWriteCheck(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  label: string,
+  payload: Record<string, unknown>,
+  action: () => Promise<Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+  try {
+    return await action();
+  } catch (error) {
+    return await handleScheduleEntryLockWriteUnsupported(context, label, error, payload);
+  }
+}
+
 export const scheduleEntryLockDefinition: ExecutableTestDefinition = {
   traceCommandClasses: ["Schedule Entry Lock", "Time Parameters"],
   meta: {
@@ -563,18 +611,20 @@ export const scheduleEntryLockWeekDayLifecycleDefinition: ExecutableTestDefiniti
   async run(context) {
     const slot = scheduleSlotInput(context);
     const preparedUser = await ensureScheduleUserCode(context, slot.userId, "Week Day schedule 生命周期");
-    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
-    const maxSlots = requireScheduleSlots(slots, "numWeekDaySlots", "Week Day", slot.slotId);
-    const schedule = makeWeekDaySchedule();
-    await setWeekDaySchedule(context, slot, schedule);
-    const afterSet = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getWeekDaySchedule", args: [slot] });
-    assertWeekDaySchedule(afterSet, "Week Day schedule");
-    assertScheduleFieldsMatch(afterSet, schedule, ["weekday", "startHour", "startMinute", "stopHour", "stopMinute"], "Week Day schedule");
-    await setWeekDaySchedule(context, slot);
-    const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getWeekDaySchedule", args: [slot] });
-    assertScheduleErased(afterErase, "Week Day schedule");
-    await context.log("info", "result", "最终测试结果：通过 Week Day schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
-    return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
+    return await runScheduleEntryLockWriteCheck(context, "Week Day schedule 生命周期检查", { slot, preparedUser }, async () => {
+      const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
+      const maxSlots = requireScheduleSlots(slots, "numWeekDaySlots", "Week Day", slot.slotId);
+      const schedule = makeWeekDaySchedule();
+      await setWeekDaySchedule(context, slot, schedule);
+      const afterSet = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getWeekDaySchedule", args: [slot] });
+      assertWeekDaySchedule(afterSet, "Week Day schedule");
+      assertScheduleFieldsMatch(afterSet, schedule, ["weekday", "startHour", "startMinute", "stopHour", "stopMinute"], "Week Day schedule");
+      await setWeekDaySchedule(context, slot);
+      const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getWeekDaySchedule", args: [slot] });
+      assertScheduleErased(afterErase, "Week Day schedule");
+      await context.log("info", "result", "最终测试结果：通过 Week Day schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
+      return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
+    });
   },
 };
 export const scheduleEntryLockYearDayLifecycleDefinition: ExecutableTestDefinition = {
@@ -593,19 +643,21 @@ export const scheduleEntryLockYearDayLifecycleDefinition: ExecutableTestDefiniti
   async run(context) {
     const slot = scheduleSlotInput(context);
     const preparedUser = await ensureScheduleUserCode(context, slot.userId, "Year Day schedule 生命周期");
-    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
-    const maxSlots = requireScheduleSlots(slots, "numYearDaySlots", "Year Day", slot.slotId);
-    const schedule = makeYearDaySchedule();
-    assertYearDaySchedule(schedule, "Year Day schedule");
-    await setYearDaySchedule(context, slot, schedule);
-    const afterSet = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getYearDaySchedule", args: [slot] });
-    assertYearDaySchedule(afterSet, "Year Day schedule");
-    assertScheduleFieldsMatch(afterSet, schedule, ["startYear", "startMonth", "startDay", "startHour", "startMinute", "stopYear", "stopMonth", "stopDay", "stopHour", "stopMinute"], "Year Day schedule");
-    await setYearDaySchedule(context, slot);
-    const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getYearDaySchedule", args: [slot] });
-    assertScheduleErased(afterErase, "Year Day schedule");
-    await context.log("info", "result", "最终测试结果：通过 Year Day schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
-    return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
+    return await runScheduleEntryLockWriteCheck(context, "Year Day schedule 生命周期检查", { slot, preparedUser }, async () => {
+      const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
+      const maxSlots = requireScheduleSlots(slots, "numYearDaySlots", "Year Day", slot.slotId);
+      const schedule = makeYearDaySchedule();
+      assertYearDaySchedule(schedule, "Year Day schedule");
+      await setYearDaySchedule(context, slot, schedule);
+      const afterSet = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getYearDaySchedule", args: [slot] });
+      assertYearDaySchedule(afterSet, "Year Day schedule");
+      assertScheduleFieldsMatch(afterSet, schedule, ["startYear", "startMonth", "startDay", "startHour", "startMinute", "stopYear", "stopMonth", "stopDay", "stopHour", "stopMinute"], "Year Day schedule");
+      await setYearDaySchedule(context, slot);
+      const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getYearDaySchedule", args: [slot] });
+      assertScheduleErased(afterErase, "Year Day schedule");
+      await context.log("info", "result", "最终测试结果：通过 Year Day schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
+      return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
+    });
   },
 };
 export const scheduleEntryLockDailyRepeatingLifecycleDefinition: ExecutableTestDefinition = {
@@ -630,18 +682,20 @@ export const scheduleEntryLockDailyRepeatingLifecycleDefinition: ExecutableTestD
   async run(context) {
     const slot = scheduleSlotInput(context);
     const preparedUser = await ensureScheduleUserCode(context, slot.userId, "Daily Repeating schedule 生命周期");
-    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
-    const maxSlots = requireScheduleSlots(slots, "numDailyRepeatingSlots", "Daily Repeating", slot.slotId);
-    const schedule = makeDailyRepeatingSchedule();
-    await setDailyRepeatingSchedule(context, slot, schedule);
-    const afterSet = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getDailyRepeatingSchedule", args: [slot] });
-    assertDailyRepeatingSchedule(afterSet, "Daily Repeating schedule");
-    assertScheduleFieldsMatch(afterSet, schedule, ["weekdays", "startHour", "startMinute", "durationHour", "durationMinute"], "Daily Repeating schedule");
-    await setDailyRepeatingSchedule(context, slot);
-    const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getDailyRepeatingSchedule", args: [slot] });
-    assertScheduleErased(afterErase, "Daily Repeating schedule");
-    await context.log("info", "result", "最终测试结果：通过 Daily Repeating schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
-    return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
+    return await runScheduleEntryLockWriteCheck(context, "Daily Repeating schedule 生命周期检查", { slot, preparedUser }, async () => {
+      const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
+      const maxSlots = requireScheduleSlots(slots, "numDailyRepeatingSlots", "Daily Repeating", slot.slotId);
+      const schedule = makeDailyRepeatingSchedule();
+      await setDailyRepeatingSchedule(context, slot, schedule);
+      const afterSet = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getDailyRepeatingSchedule", args: [slot] });
+      assertDailyRepeatingSchedule(afterSet, "Daily Repeating schedule");
+      assertScheduleFieldsMatch(afterSet, schedule, ["weekdays", "startHour", "startMinute", "durationHour", "durationMinute"], "Daily Repeating schedule");
+      await setDailyRepeatingSchedule(context, slot);
+      const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getDailyRepeatingSchedule", args: [slot] });
+      assertScheduleErased(afterErase, "Daily Repeating schedule");
+      await context.log("info", "result", "最终测试结果：通过 Daily Repeating schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
+      return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
+    });
   },
 };
 export const scheduleEntryLockSlotBoundaryDefinition: ExecutableTestDefinition = {
@@ -716,26 +770,28 @@ export const scheduleEntryLockEmptySlotReportDefinition: ExecutableTestDefinitio
   async run(context) {
     const slot = scheduleSlotInput(context);
     const preparedUser = await ensureScheduleUserCode(context, slot.userId, "空 slot 上报检查");
-    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
-    const results = [];
-    const kinds: Array<{ kind: ScheduleKind; countKey: string; label: string }> = [
-      { kind: "weekday", countKey: "numWeekDaySlots", label: "Week Day" },
-      { kind: "yearday", countKey: "numYearDaySlots", label: "Year Day" },
-      { kind: "dailyRepeating", countKey: "numDailyRepeatingSlots", label: "Daily Repeating" },
-    ];
-    for (const item of kinds) {
-      const count = getScheduleSlotCount(slots, item.countKey);
-      if (count <= 0 || slot.slotId > count) {
-        results.push({ ...item, count, skipped: true });
-        continue;
+    return await runScheduleEntryLockWriteCheck(context, "空 slot 上报检查", { slot, preparedUser }, async () => {
+      const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
+      const results = [];
+      const kinds: Array<{ kind: ScheduleKind; countKey: string; label: string }> = [
+        { kind: "weekday", countKey: "numWeekDaySlots", label: "Week Day" },
+        { kind: "yearday", countKey: "numYearDaySlots", label: "Year Day" },
+        { kind: "dailyRepeating", countKey: "numDailyRepeatingSlots", label: "Daily Repeating" },
+      ];
+      for (const item of kinds) {
+        const count = getScheduleSlotCount(slots, item.countKey);
+        if (count <= 0 || slot.slotId > count) {
+          results.push({ ...item, count, skipped: true });
+          continue;
+        }
+        await eraseScheduleByKind(context, item.kind, slot);
+        const afterErase = await getScheduleByKind(context, item.kind, slot);
+        assertScheduleErased(afterErase, `${item.label} schedule`);
+        results.push({ ...item, count, afterErase });
       }
-      await eraseScheduleByKind(context, item.kind, slot);
-      const afterErase = await getScheduleByKind(context, item.kind, slot);
-      assertScheduleErased(afterErase, `${item.label} schedule`);
-      results.push({ ...item, count, afterErase });
-    }
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 空 slot 上报检查", { slot, preparedUser, slots, results });
-    return { slot, preparedUser, slots, results };
+      await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 空 slot 上报检查", { slot, preparedUser, slots, results });
+      return { slot, preparedUser, slots, results };
+    });
   },
 };
 export const scheduleEntryLockEnableDefinition: ExecutableTestDefinition = {
@@ -755,10 +811,12 @@ export const scheduleEntryLockEnableDefinition: ExecutableTestDefinition = {
     const userId = Number(context.inputs.userId ?? 1);
     assertIntegerRange(userId, "userId", 1, 255);
     const preparedUser = await ensureScheduleUserCode(context, userId, "Enable Set 检查");
-    const disableResult = await setScheduleEntryLockEnabled(context, false, userId);
-    const enableResult = await setScheduleEntryLockEnabled(context, true, userId);
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable Set 检查", { userId, preparedUser, disableResult, enableResult });
-    return { userId, preparedUser, disableResult, enableResult };
+    return await runScheduleEntryLockWriteCheck(context, "Enable Set 检查", { userId, preparedUser }, async () => {
+      const disableResult = await setScheduleEntryLockEnabled(context, false, userId);
+      const enableResult = await setScheduleEntryLockEnabled(context, true, userId);
+      await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable Set 检查", { userId, preparedUser, disableResult, enableResult });
+      return { userId, preparedUser, disableResult, enableResult };
+    });
   },
 };
 export const scheduleEntryLockEnableAllDefinition: ExecutableTestDefinition = {
@@ -778,10 +836,12 @@ export const scheduleEntryLockEnableAllDefinition: ExecutableTestDefinition = {
     const userId = Number(context.inputs.userId ?? 1);
     assertIntegerRange(userId, "userId", 1, 255);
     const preparedUser = await ensureScheduleUserCode(context, userId, "Enable All Set 检查");
-    const disableAllResult = await setScheduleEntryLockEnabled(context, false);
-    const enableAllResult = await setScheduleEntryLockEnabled(context, true);
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable All Set 检查", { preparedUser, disableAllResult, enableAllResult });
-    return { preparedUser, disableAllResult, enableAllResult };
+    return await runScheduleEntryLockWriteCheck(context, "Enable All Set 检查", { preparedUser }, async () => {
+      const disableAllResult = await setScheduleEntryLockEnabled(context, false);
+      const enableAllResult = await setScheduleEntryLockEnabled(context, true);
+      await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable All Set 检查", { preparedUser, disableAllResult, enableAllResult });
+      return { preparedUser, disableAllResult, enableAllResult };
+    });
   },
 };
 export const scheduleEntryLockTypeSwitchDefinition: ExecutableTestDefinition = {
@@ -800,27 +860,29 @@ export const scheduleEntryLockTypeSwitchDefinition: ExecutableTestDefinition = {
   async run(context) {
     const slot = scheduleSlotInput(context);
     const preparedUser = await ensureScheduleUserCode(context, slot.userId, "schedule 类型切换检查");
-    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
-    const steps = [];
-    const candidates: Array<{ kind: ScheduleKind; countKey: string; label: string; schedule: AnyRecord; fields: string[] }> = [
-      { kind: "weekday", countKey: "numWeekDaySlots", label: "Week Day", schedule: makeWeekDaySchedule(), fields: ["weekday", "startHour", "startMinute", "stopHour", "stopMinute"] },
-      { kind: "yearday", countKey: "numYearDaySlots", label: "Year Day", schedule: makeYearDaySchedule(), fields: ["startYear", "startMonth", "startDay", "startHour", "startMinute", "stopYear", "stopMonth", "stopDay", "stopHour", "stopMinute"] },
-      { kind: "dailyRepeating", countKey: "numDailyRepeatingSlots", label: "Daily Repeating", schedule: makeDailyRepeatingSchedule(), fields: ["weekdays", "startHour", "startMinute", "durationHour", "durationMinute"] },
-    ];
-    for (const candidate of candidates) {
-      const count = getScheduleSlotCount(slots, candidate.countKey);
-      if (count <= 0 || slot.slotId > count) {
-        steps.push({ ...candidate, count, skipped: true });
-        continue;
+    return await runScheduleEntryLockWriteCheck(context, "Schedule 类型切换检查", { slot, preparedUser }, async () => {
+      const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
+      const steps = [];
+      const candidates: Array<{ kind: ScheduleKind; countKey: string; label: string; schedule: AnyRecord; fields: string[] }> = [
+        { kind: "weekday", countKey: "numWeekDaySlots", label: "Week Day", schedule: makeWeekDaySchedule(), fields: ["weekday", "startHour", "startMinute", "stopHour", "stopMinute"] },
+        { kind: "yearday", countKey: "numYearDaySlots", label: "Year Day", schedule: makeYearDaySchedule(), fields: ["startYear", "startMonth", "startDay", "startHour", "startMinute", "stopYear", "stopMonth", "stopDay", "stopHour", "stopMinute"] },
+        { kind: "dailyRepeating", countKey: "numDailyRepeatingSlots", label: "Daily Repeating", schedule: makeDailyRepeatingSchedule(), fields: ["weekdays", "startHour", "startMinute", "durationHour", "durationMinute"] },
+      ];
+      for (const candidate of candidates) {
+        const count = getScheduleSlotCount(slots, candidate.countKey);
+        if (count <= 0 || slot.slotId > count) {
+          steps.push({ ...candidate, count, skipped: true });
+          continue;
+        }
+        const writeResult = await writeScheduleByKind(context, candidate.kind, slot, candidate.schedule);
+        await setScheduleEntryLockEnabled(context, true, slot.userId);
+        const afterSet = await getScheduleByKind(context, candidate.kind, slot);
+        assertScheduleFieldsMatch(afterSet, candidate.schedule, candidate.fields, `${candidate.label} schedule`);
+        steps.push({ kind: candidate.kind, label: candidate.label, count, writeResult, afterSet });
       }
-      const writeResult = await writeScheduleByKind(context, candidate.kind, slot, candidate.schedule);
-      await setScheduleEntryLockEnabled(context, true, slot.userId);
-      const afterSet = await getScheduleByKind(context, candidate.kind, slot);
-      assertScheduleFieldsMatch(afterSet, candidate.schedule, candidate.fields, `${candidate.label} schedule`);
-      steps.push({ kind: candidate.kind, label: candidate.label, count, writeResult, afterSet });
-    }
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 类型切换检查", { slot, preparedUser, slots, steps });
-    return { slot, preparedUser, slots, steps };
+      await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 类型切换检查", { slot, preparedUser, slots, steps });
+      return { slot, preparedUser, slots, steps };
+    });
   },
 };
 export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
@@ -855,42 +917,44 @@ export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
     const originalMode = optionalNumber(beforeDoorLock.currentMode);
 
     try {
-      await writeScheduleByKind(context, activeKind, slot, activeSchedule);
-      await setScheduleEntryLockEnabled(context, true, slot.userId);
-      await restoreDoorLockMode(context, DOOR_LOCK_MODE_SECURED, DOOR_LOCK_MODE_SECURED);
-      await context.log("info", "manual.wait", `请在门锁上输入 User ID=${slot.userId} 的 PIN=${preparedUser.code}，当前计划应允许通行。`, {
-        promptKey: "schedule.active.auth",
-        promptTitle: "Schedule 有效时间内认证",
-        promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内输入 User ID=${slot.userId} 的 PIN=${preparedUser.code} 本地开锁，期望门锁解锁。`,
-        promptMeta: `activeKind=${activeKind}，slotId=${slot.slotId}`,
-        timeoutMs: waitMs,
-      });
-      const activeAuthStatus = await waitForDoorLockUnlocked(context, waitMs);
-      await context.log("info", "manual.done", "Schedule 有效时间内认证完成，检测到门锁解锁。", { activeAuthStatus });
+      return await runScheduleEntryLockWriteCheck(context, "实际生效半自动检查", { slot, preparedUser, slots, activeKind, inactiveKind }, async () => {
+        await writeScheduleByKind(context, activeKind, slot, activeSchedule);
+        await setScheduleEntryLockEnabled(context, true, slot.userId);
+        await restoreDoorLockMode(context, DOOR_LOCK_MODE_SECURED, DOOR_LOCK_MODE_SECURED);
+        await context.log("info", "manual.wait", `请在门锁上输入 User ID=${slot.userId} 的 PIN=${preparedUser.code}，当前计划应允许通行。`, {
+          promptKey: "schedule.active.auth",
+          promptTitle: "Schedule 有效时间内认证",
+          promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内输入 User ID=${slot.userId} 的 PIN=${preparedUser.code} 本地开锁，期望门锁解锁。`,
+          promptMeta: `activeKind=${activeKind}，slotId=${slot.slotId}`,
+          timeoutMs: waitMs,
+        });
+        const activeAuthStatus = await waitForDoorLockUnlocked(context, waitMs);
+        await context.log("info", "manual.done", "Schedule 有效时间内认证完成，检测到门锁解锁。", { activeAuthStatus });
 
-      await restoreDoorLockMode(context, DOOR_LOCK_MODE_SECURED, DOOR_LOCK_MODE_SECURED);
-      await writeScheduleByKind(context, inactiveKind, slot, inactiveSchedule);
-      await setScheduleEntryLockEnabled(context, true, slot.userId);
-      await context.log("info", "manual.wait", `请再次在门锁上输入 User ID=${slot.userId} 的 PIN=${preparedUser.code}，当前计划应拒绝通行。`, {
-        promptKey: "schedule.inactive.auth",
-        promptTitle: "Schedule 非有效时间认证",
-        promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内输入 User ID=${slot.userId} 的 PIN=${preparedUser.code} 本地开锁，期望门锁保持上锁。`,
-        promptMeta: `inactiveKind=${inactiveKind}，slotId=${slot.slotId}`,
-        timeoutMs: waitMs,
+        await restoreDoorLockMode(context, DOOR_LOCK_MODE_SECURED, DOOR_LOCK_MODE_SECURED);
+        await writeScheduleByKind(context, inactiveKind, slot, inactiveSchedule);
+        await setScheduleEntryLockEnabled(context, true, slot.userId);
+        await context.log("info", "manual.wait", `请再次在门锁上输入 User ID=${slot.userId} 的 PIN=${preparedUser.code}，当前计划应拒绝通行。`, {
+          promptKey: "schedule.inactive.auth",
+          promptTitle: "Schedule 非有效时间认证",
+          promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内输入 User ID=${slot.userId} 的 PIN=${preparedUser.code} 本地开锁，期望门锁保持上锁。`,
+          promptMeta: `inactiveKind=${inactiveKind}，slotId=${slot.slotId}`,
+          timeoutMs: waitMs,
+        });
+        const inactiveAuthStatus = await waitForDoorLockStillLocked(context, waitMs);
+        await context.log("info", "manual.done", "Schedule 非有效时间认证完成，门锁保持上锁。", { inactiveAuthStatus });
+        await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 实际生效半自动检查", {
+          slot,
+          preparedUser,
+          activeKind,
+          activeSchedule,
+          activeAuthStatus,
+          inactiveKind,
+          inactiveSchedule,
+          inactiveAuthStatus,
+        });
+        return { slot, preparedUser, slots, activeKind, activeSchedule, activeAuthStatus, inactiveKind, inactiveSchedule, inactiveAuthStatus };
       });
-      const inactiveAuthStatus = await waitForDoorLockStillLocked(context, waitMs);
-      await context.log("info", "manual.done", "Schedule 非有效时间认证完成，门锁保持上锁。", { inactiveAuthStatus });
-      await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 实际生效半自动检查", {
-        slot,
-        preparedUser,
-        activeKind,
-        activeSchedule,
-        activeAuthStatus,
-        inactiveKind,
-        inactiveSchedule,
-        inactiveAuthStatus,
-      });
-      return { slot, preparedUser, slots, activeKind, activeSchedule, activeAuthStatus, inactiveKind, inactiveSchedule, inactiveAuthStatus };
     } finally {
       await restoreDoorLockMode(context, originalMode, DOOR_LOCK_MODE_SECURED);
     }

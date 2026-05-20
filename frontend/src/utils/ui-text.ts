@@ -38,6 +38,8 @@ export function translateRunStatus(status?: string): string {
       return "执行中";
     case "passed":
       return "通过";
+    case "skipped":
+      return "不适用";
     case "failed":
       return "失败";
     case "cancelled":

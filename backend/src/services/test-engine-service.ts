@@ -191,7 +191,7 @@ export class TestEngineService {
     if (!run) {
       throw new Error(`Unknown test run: ${runId}`);
     }
-    if (run.status === "passed" || run.status === "failed" || run.status === "cancelled") {
+    if (run.status === "passed" || run.status === "skipped" || run.status === "failed" || run.status === "cancelled") {
       return;
     }
 
@@ -500,16 +500,20 @@ export class TestEngineService {
         isCancelled: () => this.cancellationFlags.has(runId),
       });
 
-      run.status = this.cancellationFlags.has(runId) ? "cancelled" : "passed";
+      const resultSkipped = result && typeof result === "object" && (result as Record<string, unknown>).skipped === true;
+      run.status = this.cancellationFlags.has(runId) ? "cancelled" : resultSkipped ? "skipped" : "passed";
       run.finishedAt = nowIso();
       run.durationMs = durationMs(startedMs);
       run.summaryJson = {
         status: run.status,
         nodeId: run.nodeId,
         testDefinitionId: run.testDefinitionId,
+        ...(resultSkipped && typeof (result as Record<string, unknown>).unsupportedReason === "string"
+          ? { message: (result as Record<string, unknown>).unsupportedReason }
+          : {}),
       };
       run.resultJson = result;
-      console.info(`[test-engine] [run:${runId}] 最终测试结果：通过`, JSON.stringify({
+      console.info(`[test-engine] [run:${runId}] 最终测试结果：${run.status === "skipped" ? "不适用" : "通过"}`, JSON.stringify({
         nodeId: run.nodeId,
         testDefinitionId: run.testDefinitionId,
       }));

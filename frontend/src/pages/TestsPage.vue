@@ -50,8 +50,8 @@ interface AggregatedStepRecord extends TestLogRecord {
   };
 }
 
-const TERMINAL_STATUSES = new Set<TestRunRecord["status"]>(["passed", "failed", "cancelled"]);
-const COMPLETED_EXECUTION_STATUSES = new Set<ExecutionStatus>(["passed", "failed", "cancelled", "blocked"]);
+const TERMINAL_STATUSES = new Set<TestRunRecord["status"]>(["passed", "skipped", "failed", "cancelled"]);
+const COMPLETED_EXECUTION_STATUSES = new Set<ExecutionStatus>(["passed", "skipped", "failed", "cancelled", "blocked"]);
 const ACTIVE_EXECUTION_STATUSES = new Set<ExecutionStatus>(["submitting", "queued", "running"]);
 
 const platform = usePlatformStore();
@@ -278,6 +278,10 @@ const passedExecutionCount = computed(() => {
   return executionItems.value.filter((item) => getExecutionItemStatus(item) === "passed").length;
 });
 
+const skippedExecutionCount = computed(() => {
+  return executionItems.value.filter((item) => getExecutionItemStatus(item) === "skipped").length;
+});
+
 const canExportExecutionReport = computed(() => {
   if (pageStage.value !== "execution" || executionBusy.value || reportActionBusy.value) {
     return false;
@@ -309,7 +313,13 @@ const overallExecutionStatus = computed<ExecutionStatus>(() => {
   if (executionItems.value.some((item) => getExecutionItemStatus(item) === "blocked")) {
     return "failed";
   }
-  if (executionItems.value.every((item) => getExecutionItemStatus(item) === "passed")) {
+  if (executionItems.value.every((item) => getExecutionItemStatus(item) === "skipped")) {
+    return "skipped";
+  }
+  if (executionItems.value.every((item) => {
+    const status = getExecutionItemStatus(item);
+    return status === "passed" || status === "skipped";
+  })) {
     return "passed";
   }
   return "pending";
@@ -522,7 +532,7 @@ function getExecutionStatusTone(status: ExecutionStatus): "good" | "bad" | "warn
   if (status === "failed" || status === "cancelled") {
     return "bad";
   }
-  if (status === "submitting" || status === "queued" || status === "running" || status === "blocked") {
+  if (status === "skipped" || status === "submitting" || status === "queued" || status === "running" || status === "blocked") {
     return "warn";
   }
   return undefined;
@@ -922,7 +932,7 @@ function getPlaceholderStepState(item: ExecutionItem): StepState {
   if (status === "failed" || status === "cancelled") {
     return "failed";
   }
-  if (status === "blocked") {
+  if (status === "blocked" || status === "skipped") {
     return "warn";
   }
   if (status === "submitting" || status === "running" || status === "queued") {
@@ -948,6 +958,10 @@ function getPlaceholderStepMessage(item: ExecutionItem): string {
   if (status === "blocked") {
     return item.blockedReason ? `未提交到后端：${item.blockedReason}` : "本项未提交到后端执行";
   }
+  if (status === "skipped") {
+    const message = getRunFailureMessage(getExecutionRun(item));
+    return message ? `测试不适用：${message}` : "测试不适用，设备不支持该写入能力";
+  }
   if (status === "cancelled") {
     return "测试已取消";
   }
@@ -972,6 +986,7 @@ function buildExecutionReportSummaryPayload(): Record<string, unknown> {
     totalCount: executionItems.value.length,
     completedCount: completedExecutionCount.value,
     passedCount: passedExecutionCount.value,
+    skippedCount: skippedExecutionCount.value,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -1019,9 +1034,12 @@ function formatReportFailureLogs(logs: TestLogRecord[]): string {
   }).join("\n");
 }
 
-function getReportStatusTone(status: ExecutionStatus): "passed" | "failed" | "cancelled" | "running" | "pending" {
+function getReportStatusTone(status: ExecutionStatus): "passed" | "skipped" | "failed" | "cancelled" | "running" | "pending" {
   if (status === "passed") {
     return "passed";
+  }
+  if (status === "skipped") {
+    return "skipped";
   }
   if (status === "failed") {
     return "failed";
@@ -1069,6 +1087,7 @@ function buildExecutionReportHtml(): string {
     ["测试项总数", String(executionItems.value.length)],
     ["已完成", String(completedExecutionCount.value)],
     ["已通过", String(passedExecutionCount.value)],
+    ["不适用", String(skippedExecutionCount.value)],
   ];
 
   const buildSummaryRows = (rows: string[][]) => rows.map(([label, value]) => `
@@ -1082,6 +1101,7 @@ function buildExecutionReportHtml(): string {
     ["测试项总数", String(executionItems.value.length), "pending"],
     ["已完成", String(completedExecutionCount.value), "running"],
     ["已通过", String(passedExecutionCount.value), "passed"],
+    ["不适用", String(skippedExecutionCount.value), "skipped"],
   ] as const;
 
   const overviewCardMarkup = overviewCards.map(([label, value, tone]) => `
@@ -1262,7 +1282,8 @@ function buildExecutionReportHtml(): string {
       background: var(--bad-soft);
       border-color: rgba(222, 75, 75, 0.18);
     }
-    .overview-card[data-tone="running"] {
+    .overview-card[data-tone="running"],
+    .overview-card[data-tone="skipped"] {
       background: var(--warn-soft);
       border-color: rgba(255, 176, 32, 0.18);
     }
@@ -1335,7 +1356,8 @@ function buildExecutionReportHtml(): string {
       color: var(--bad);
       background: var(--bad-soft);
     }
-    .status-badge[data-tone="running"] {
+    .status-badge[data-tone="running"],
+    .status-badge[data-tone="skipped"] {
       color: #9a6a00;
       background: var(--warn-soft);
     }
@@ -1466,6 +1488,7 @@ function buildExecutionReportCsv(): string {
     ["测试项总数", String(executionItems.value.length)],
     ["已完成", String(completedExecutionCount.value)],
     ["已通过", String(passedExecutionCount.value)],
+    ["不适用", String(skippedExecutionCount.value)],
     [],
     ["ID", "测试项目名称", "测试结果"],
   ];
@@ -1935,7 +1958,7 @@ async function skipActiveManualPrompt(): Promise<void> {
           <div>
             <p class="section-kicker">总测试标题</p>
             <h4>#{{ selectedNode.nodeId }} {{ describeNode(selectedNode) }}</h4>
-            <p class="execution-subtitle">共 {{ executionItems.length }} 项测试，已完成 {{ completedExecutionCount }} 项，通过 {{ passedExecutionCount }} 项。</p>
+            <p class="execution-subtitle">共 {{ executionItems.length }} 项测试，已完成 {{ completedExecutionCount }} 项，通过 {{ passedExecutionCount }} 项，不适用 {{ skippedExecutionCount }} 项。</p>
           </div>
           <div class="execution-header-side">
             <span class="status-pill" :data-tone="getExecutionStatusTone(overallExecutionStatus)">

@@ -239,6 +239,7 @@ export type TestRunStatus =
   | "queued"
   | "running"
   | "passed"
+  | "skipped"
   | "failed"
   | "cancelled";
 
