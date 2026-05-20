@@ -72,7 +72,13 @@ const reportStatusMessage = ref("");
 let supportLoadToken = 0;
 
 const TEST_DEFINITION_PRIORITY: Record<string, number> = {
-  "basic-door-lock-mapping": 20,
+  "basic-door-lock-version": 20,
+  "basic-get-report": 21,
+  "basic-report-value-legality": 22,
+  "basic-door-lock-mapping": 23,
+  "basic-set-secured-mapping": 24,
+  "basic-set-unsecured-mapping": 25,
+  "basic-v2-target-duration": 26,
   "schedule-entry-lock-compliance": 40,
   "transport-service-fragmentation": 60,
   "association-group-info": 80,
@@ -108,7 +114,13 @@ const TEST_DEFINITION_PRIORITY: Record<string, number> = {
   "security-scheme": 460,
 };
 const DEFINITION_CC_GROUPS: Record<string, { key: string; title: string; description: string; order: number }> = {
-  "basic-door-lock-mapping": { key: "basic", title: "Basic CC (0x20)", description: "Basic Report 与门锁映射验证", order: 20 },
+  "basic-door-lock-version": { key: "basic", title: "Basic CC (0x20)", description: "Basic v2、Report 合法性、Door Lock 映射与 Set 行为", order: 20 },
+  "basic-get-report": { key: "basic", title: "Basic CC (0x20)", description: "Basic v2、Report 合法性、Door Lock 映射与 Set 行为", order: 20 },
+  "basic-report-value-legality": { key: "basic", title: "Basic CC (0x20)", description: "Basic v2、Report 合法性、Door Lock 映射与 Set 行为", order: 20 },
+  "basic-door-lock-mapping": { key: "basic", title: "Basic CC (0x20)", description: "Basic v2、Report 合法性、Door Lock 映射与 Set 行为", order: 20 },
+  "basic-set-secured-mapping": { key: "basic", title: "Basic CC (0x20)", description: "Basic v2、Report 合法性、Door Lock 映射与 Set 行为", order: 20 },
+  "basic-set-unsecured-mapping": { key: "basic", title: "Basic CC (0x20)", description: "Basic v2、Report 合法性、Door Lock 映射与 Set 行为", order: 20 },
+  "basic-v2-target-duration": { key: "basic", title: "Basic CC (0x20)", description: "Basic v2、Report 合法性、Door Lock 映射与 Set 行为", order: 20 },
   "schedule-entry-lock-compliance": { key: "schedule-entry-lock", title: "Schedule Entry Lock CC (0x4E)", description: "门锁用户计划表能力与 slot 读取", order: 40 },
   "transport-service-fragmentation": { key: "transport-service", title: "Transport Service CC (0x55)", description: "长报文/分片传输链路验证", order: 60 },
   "association-group-info": { key: "agi", title: "Association Group Information CC (0x59)", description: "Association group 名称、profile 与命令列表", order: 80 },
@@ -1984,6 +1996,13 @@ async function skipActiveManualPrompt(): Promise<void> {
   gap: 18px;
 }
 
+.stage-panel-definitions {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 210px);
+  min-height: min(620px, calc(100vh - 210px));
+}
+
 .section-heading-tight {
   margin-bottom: 0;
 }
@@ -2037,8 +2056,12 @@ async function skipActiveManualPrompt(): Promise<void> {
   color: var(--muted);
 }
 
-.device-tests {
+.device-table-row .device-tests {
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .compact-button {
@@ -2086,6 +2109,15 @@ async function skipActiveManualPrompt(): Promise<void> {
 .definition-cc-groups {
   display: grid;
   gap: 18px;
+}
+
+.stage-panel-definitions .definition-cc-groups {
+  flex: 1 1 auto;
+  min-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
 }
 
 .definition-cc-group {
@@ -2222,6 +2254,18 @@ async function skipActiveManualPrompt(): Promise<void> {
   justify-content: space-between;
   gap: 16px;
   align-items: center;
+}
+
+.stage-panel-definitions .action-footer {
+  position: sticky;
+  bottom: 18px;
+  z-index: 5;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 -14px 32px rgba(97, 73, 153, 0.12);
+  backdrop-filter: blur(14px);
 }
 
 .execution-panel {
@@ -2463,6 +2507,15 @@ async function skipActiveManualPrompt(): Promise<void> {
 }
 
 @media (max-width: 720px) {
+  .stage-panel-definitions {
+    max-height: calc(100vh - 190px);
+    min-height: min(560px, calc(100vh - 190px));
+  }
+
+  .stage-panel-definitions .definition-cc-groups {
+    min-height: 180px;
+  }
+
   .selection-summary-card,
   .execution-header-card,
   .action-footer,

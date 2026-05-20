@@ -4,6 +4,12 @@ import {
   associationDefinition,
   associationGroupInfoDefinition,
   basicDoorLockMappingDefinition,
+  basicDoorLockVersionDefinition,
+  basicGetReportDefinition,
+  basicReportValueDefinition,
+  basicSetSecuredMappingDefinition,
+  basicSetUnsecuredMappingDefinition,
+  basicV2TargetDurationDefinition,
   batteryHealthDefinition,
   deviceResetLocallyDefinition,
   firmwareMetadataDefinition,
@@ -39,7 +45,13 @@ import {
 } from "./definitions/user-credential.js";
 
 export const executableDefinitions: ExecutableTestDefinition[] = [
+  basicDoorLockVersionDefinition,
+  basicGetReportDefinition,
+  basicReportValueDefinition,
   basicDoorLockMappingDefinition,
+  basicSetSecuredMappingDefinition,
+  basicSetUnsecuredMappingDefinition,
+  basicV2TargetDurationDefinition,
   scheduleEntryLockDefinition,
   transportServiceDefinition,
   associationGroupInfoDefinition,
