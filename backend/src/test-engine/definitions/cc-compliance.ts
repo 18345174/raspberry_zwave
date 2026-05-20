@@ -128,6 +128,132 @@ function pickNumber(record: AnyRecord, keys: string[]): number | undefined {
   return undefined;
 }
 
+
+function isIntegerInRange(value: unknown, min: number, max: number): boolean {
+  const numberValue = optionalNumber(value);
+  return numberValue != undefined && Number.isInteger(numberValue) && numberValue >= min && numberValue <= max;
+}
+
+function assertIntegerRange(value: unknown, label: string, min: number, max: number): void {
+  if (!isIntegerInRange(value, min, max)) {
+    throw new Error(`${label}=${String(value)} 超出合法范围 ${min}..${max}。`);
+  }
+}
+
+function assertOptionalIntegerRange(value: unknown, label: string, min: number, max: number): void {
+  if (value != undefined) {
+    assertIntegerRange(value, label, min, max);
+  }
+}
+
+function isErasedSchedule(schedule: unknown): boolean {
+  return schedule == undefined || schedule === false || (isRecord(schedule) && Object.keys(schedule).length === 0);
+}
+
+function assertScheduleSlotCount(value: unknown, label: string): void {
+  assertIntegerRange(value, label, 0, 255);
+}
+
+function numberOrZero(value: unknown): number {
+  return optionalNumber(value) ?? 0;
+}
+
+function getScheduleSlotCount(slots: unknown, key: string): number {
+  return isRecord(slots) ? numberOrZero(slots[key]) : 0;
+}
+
+function assertTimezoneOffset(value: unknown, label: string): void {
+  const offset = optionalNumber(value);
+  if (offset == undefined || !Number.isInteger(offset) || offset < -24 * 60 || offset > 24 * 60) {
+    throw new Error(`${label}=${String(value)} 不是合法的分钟偏移值。`);
+  }
+}
+
+function assertTimeRecord(time: unknown, label: string): void {
+  if (!isRecord(time)) {
+    throw new Error(`${label} 未返回有效时间。`);
+  }
+  assertIntegerRange(time.hour, `${label}.hour`, 0, 23);
+  assertIntegerRange(time.minute, `${label}.minute`, 0, 59);
+  assertIntegerRange(time.second, `${label}.second`, 0, 59);
+}
+
+function assertDateRecord(date: unknown, label: string): void {
+  if (!isRecord(date)) {
+    throw new Error(`${label} 未返回有效日期。`);
+  }
+  assertIntegerRange(date.year, `${label}.year`, 2000, 9999);
+  assertIntegerRange(date.month, `${label}.month`, 1, 12);
+  assertIntegerRange(date.day, `${label}.day`, 1, 31);
+  const parsed = new Date(Number(date.year), Number(date.month) - 1, Number(date.day));
+  if (parsed.getFullYear() !== Number(date.year) || parsed.getMonth() !== Number(date.month) - 1 || parsed.getDate() !== Number(date.day)) {
+    throw new Error(`${label} 日期 ${String(date.year)}-${String(date.month)}-${String(date.day)} 不存在。`);
+  }
+}
+
+function assertScheduleTimeFields(schedule: AnyRecord, label: string): void {
+  assertOptionalIntegerRange(schedule.startHour, `${label}.startHour`, 0, 23);
+  assertOptionalIntegerRange(schedule.startMinute, `${label}.startMinute`, 0, 59);
+  assertOptionalIntegerRange(schedule.stopHour, `${label}.stopHour`, 0, 23);
+  assertOptionalIntegerRange(schedule.stopMinute, `${label}.stopMinute`, 0, 59);
+  assertOptionalIntegerRange(schedule.durationHour, `${label}.durationHour`, 0, 23);
+  assertOptionalIntegerRange(schedule.durationMinute, `${label}.durationMinute`, 0, 59);
+}
+
+function assertWeekDaySchedule(schedule: unknown, label: string): void {
+  if (isErasedSchedule(schedule)) return;
+  if (!isRecord(schedule)) throw new Error(`${label} 未返回有效 Week Day schedule。`);
+  assertIntegerRange(schedule.weekday, `${label}.weekday`, 0, 6);
+  assertScheduleTimeFields(schedule, label);
+  const startTotal = Number(schedule.startHour) * 60 + Number(schedule.startMinute);
+  const stopTotal = Number(schedule.stopHour) * 60 + Number(schedule.stopMinute);
+  if (stopTotal <= startTotal) {
+    throw new Error(`${label} stop time 必须晚于 start time，且 Week Day schedule 不能跨天。`);
+  }
+}
+
+function assertYearDaySchedule(schedule: unknown, label: string): void {
+  if (isErasedSchedule(schedule)) return;
+  if (!isRecord(schedule)) throw new Error(`${label} 未返回有效 Year Day schedule。`);
+  assertIntegerRange(schedule.startYear, `${label}.startYear`, 0, 99);
+  assertIntegerRange(schedule.startMonth, `${label}.startMonth`, 1, 12);
+  assertIntegerRange(schedule.startDay, `${label}.startDay`, 1, 31);
+  assertIntegerRange(schedule.startHour, `${label}.startHour`, 0, 23);
+  assertIntegerRange(schedule.startMinute, `${label}.startMinute`, 0, 59);
+  assertIntegerRange(schedule.stopYear, `${label}.stopYear`, 0, 99);
+  assertIntegerRange(schedule.stopMonth, `${label}.stopMonth`, 1, 12);
+  assertIntegerRange(schedule.stopDay, `${label}.stopDay`, 1, 31);
+  assertIntegerRange(schedule.stopHour, `${label}.stopHour`, 0, 23);
+  assertIntegerRange(schedule.stopMinute, `${label}.stopMinute`, 0, 59);
+  const start = new Date(2000 + Number(schedule.startYear), Number(schedule.startMonth) - 1, Number(schedule.startDay), Number(schedule.startHour), Number(schedule.startMinute));
+  const stop = new Date(2000 + Number(schedule.stopYear), Number(schedule.stopMonth) - 1, Number(schedule.stopDay), Number(schedule.stopHour), Number(schedule.stopMinute));
+  if (stop <= start) {
+    throw new Error(`${label} stop date/time 必须晚于 start date/time。`);
+  }
+}
+
+function assertDailyRepeatingSchedule(schedule: unknown, label: string): void {
+  if (isErasedSchedule(schedule)) return;
+  if (!isRecord(schedule)) throw new Error(`${label} 未返回有效 Daily Repeating schedule。`);
+  if (!Array.isArray(schedule.weekdays) || schedule.weekdays.length < 1) {
+    throw new Error(`${label}.weekdays 必须至少包含一天。`);
+  }
+  for (const weekday of schedule.weekdays) {
+    assertIntegerRange(weekday, `${label}.weekdays[]`, 0, 6);
+  }
+  assertScheduleTimeFields(schedule, label);
+  const durationTotal = Number(schedule.durationHour) * 60 + Number(schedule.durationMinute);
+  if (durationTotal <= 0) {
+    throw new Error(`${label} duration 必须大于 0。`);
+  }
+}
+
+function compareLocalDeviceTime(date: AnyRecord, time: AnyRecord): { differenceMs: number; differenceMinutes: number } {
+  const deviceTime = new Date(Number(date.year), Number(date.month) - 1, Number(date.day), Number(time.hour), Number(time.minute), Number(time.second));
+  const differenceMs = Math.abs(Date.now() - deviceTime.getTime());
+  return { differenceMs, differenceMinutes: Math.round(differenceMs / 60000) };
+}
+
 function normalizeBasicReport(raw: unknown): BasicReportSnapshot {
   if (typeof raw === "number") {
     return { currentValue: raw, raw };
@@ -640,6 +766,220 @@ export const scheduleEntryLockDefinition: ExecutableTestDefinition = {
       await context.log("warn", "schedule.write.not-implemented", "为避免破坏门锁通行计划，本版本仅做读取验证；实际写入/删除计划请在专用半自动用例中开启。", { userId, slotId });
     }
     return { ...precheck, userId, slotId, slots, timezone, weekDay, yearDay, dailyRepeating };
+  },
+};
+
+export const scheduleEntryLockCapabilitiesDefinition: ExecutableTestDefinition = {
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
+  meta: {
+    id: "schedule-entry-lock-capabilities-v1",
+    key: "schedule-entry-lock-capabilities",
+    name: "Schedule Entry Lock 能力与版本",
+    deviceType: "door-lock",
+    version: 1,
+    enabled: true,
+    description: "读取 0x4E 版本和 Week Day / Year Day / Daily Repeating slot 数量，检查 v3 Daily Repeating 能力。",
+    inputSchema: {},
+  },
+  supports: supportsCommandClass("Schedule Entry Lock"),
+  async run(context) {
+    const precheck = await readCcPrecheck(context, "Schedule Entry Lock");
+    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" }) as AnyRecord | undefined;
+    if (!slots) {
+      throw new Error("Schedule Entry Lock Supported Report 未返回 slot 能力。");
+    }
+    assertScheduleSlotCount(slots.numWeekDaySlots, "numWeekDaySlots");
+    assertScheduleSlotCount(slots.numYearDaySlots, "numYearDaySlots");
+    if ((precheck.version ?? 1) >= 3) {
+      assertScheduleSlotCount(slots.numDailyRepeatingSlots, "numDailyRepeatingSlots");
+    }
+    const userCount = context.node.commandClasses.includes("User Code")
+      ? await invokeOptional(context, "User Code", "getUsersCount")
+      : undefined;
+    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 能力与版本检查", {
+      version: precheck.version,
+      slots,
+      userCount,
+    });
+    return { ...precheck, slots, userCount };
+  },
+};
+
+export const scheduleEntryLockTimeOffsetDefinition: ExecutableTestDefinition = {
+  traceCommandClasses: ["Schedule Entry Lock"],
+  meta: {
+    id: "schedule-entry-lock-time-offset-v1",
+    key: "schedule-entry-lock-time-offset",
+    name: "Schedule Entry Lock Time Offset",
+    deviceType: "door-lock",
+    version: 1,
+    enabled: true,
+    description: "v2+ 读取 Schedule Entry Lock Time Offset，验证标准时区偏移和 DST 偏移编码合法。",
+    inputSchema: {},
+  },
+  supports(node) {
+    if (!node.commandClasses.includes("Schedule Entry Lock")) return { supported: false, reason: "节点未发现 Schedule Entry Lock CC。" };
+    const version = nodeCcVersion(node, "Schedule Entry Lock");
+    if (version != undefined && version < 2) return { supported: false, reason: `Schedule Entry Lock v${version} 不支持 Time Offset。` };
+    return { supported: true };
+  },
+  async run(context) {
+    const precheck = await readCcPrecheck(context, "Schedule Entry Lock");
+    const timezone = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getTimezone" }) as AnyRecord | undefined;
+    if (!timezone) {
+      throw new Error("Schedule Entry Lock Time Offset Report 未返回。");
+    }
+    assertTimezoneOffset(timezone.standardOffset, "standardOffset");
+    assertTimezoneOffset(timezone.dstOffset, "dstOffset");
+    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Time Offset 检查", { timezone });
+    return { ...precheck, timezone };
+  },
+};
+
+export const scheduleEntryLockTimeDependencyDefinition: ExecutableTestDefinition = {
+  traceCommandClasses: ["Schedule Entry Lock", "Time"],
+  meta: {
+    id: "schedule-entry-lock-time-dependency-v1",
+    key: "schedule-entry-lock-time-dependency",
+    name: "Schedule Entry Lock 时间依赖",
+    deviceType: "door-lock",
+    version: 1,
+    enabled: true,
+    description: "读取 Time CC 日期/时间/时区，验证设备本地时间可用于 Schedule Entry Lock 时间窗。",
+    inputSchema: { maxDriftMinutes: { type: "number", default: 5 } },
+  },
+  supports(node) {
+    if (!node.commandClasses.includes("Schedule Entry Lock")) return { supported: false, reason: "节点未发现 Schedule Entry Lock CC。" };
+    if (!node.commandClasses.includes("Time")) return { supported: false, reason: "节点未发现 Time CC，无法执行时间依赖检查。" };
+    return { supported: true };
+  },
+  async run(context) {
+    const maxDriftMinutes = Number(context.inputs.maxDriftMinutes ?? 5);
+    const schedulePrecheck = await readCcPrecheck(context, "Schedule Entry Lock");
+    const timePrecheck = await readCcPrecheck(context, "Time");
+    const [time, date, timeTimezone, scheduleTimezone] = await Promise.all([
+      context.invokeCcApi({ commandClass: "Time", method: "getTime" }),
+      context.invokeCcApi({ commandClass: "Time", method: "getDate" }),
+      invokeOptional(context, "Time", "getTimezone"),
+      schedulePrecheck.version != undefined && schedulePrecheck.version >= 2
+        ? invokeOptional(context, "Schedule Entry Lock", "getTimezone")
+        : undefined,
+    ]);
+    assertTimeRecord(time, "Time CC time");
+    assertDateRecord(date, "Time CC date");
+    const drift = compareLocalDeviceTime(date as AnyRecord, time as AnyRecord);
+    if (Number.isFinite(maxDriftMinutes) && drift.differenceMinutes > maxDriftMinutes) {
+      throw new Error(`设备 Time CC 本地时间与控制器时间偏差约 ${drift.differenceMinutes} 分钟，超过 ${maxDriftMinutes} 分钟。`);
+    }
+    if (isRecord(timeTimezone)) {
+      assertTimezoneOffset(timeTimezone.standardOffset, "Time CC standardOffset");
+      assertTimezoneOffset(timeTimezone.dstOffset, "Time CC dstOffset");
+    }
+    if (isRecord(scheduleTimezone)) {
+      assertTimezoneOffset(scheduleTimezone.standardOffset, "Schedule Entry Lock standardOffset");
+      assertTimezoneOffset(scheduleTimezone.dstOffset, "Schedule Entry Lock dstOffset");
+      if (isRecord(timeTimezone) && timeTimezone.standardOffset !== scheduleTimezone.standardOffset) {
+        await context.log("warn", "time.offset.mismatch", "Time CC 与 Schedule Entry Lock Time Offset 的 standardOffset 不一致。", {
+          timeTimezone,
+          scheduleTimezone,
+        });
+      }
+    }
+    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 时间依赖检查", {
+      time,
+      date,
+      drift,
+      timeTimezone,
+      scheduleTimezone,
+      maxDriftMinutes,
+    });
+    return { schedulePrecheck, timePrecheck, time, date, drift, timeTimezone, scheduleTimezone, maxDriftMinutes };
+  },
+};
+
+export const scheduleEntryLockWeekDayReadDefinition: ExecutableTestDefinition = {
+  traceCommandClasses: ["Schedule Entry Lock"],
+  meta: {
+    id: "schedule-entry-lock-weekday-read-v1",
+    key: "schedule-entry-lock-weekday-read",
+    name: "Schedule Entry Lock Week Day 读取",
+    deviceType: "door-lock",
+    version: 1,
+    enabled: true,
+    description: "读取指定用户 Week Day schedule slot，验证 weekday 和起止时间字段范围；空 slot 允许返回空值。",
+    inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
+  },
+  supports: supportsCommandClass("Schedule Entry Lock"),
+  async run(context) {
+    const userId = Number(context.inputs.userId ?? 1);
+    const slotId = Number(context.inputs.slotId ?? 1);
+    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" }) as AnyRecord | undefined;
+    const maxSlots = getScheduleSlotCount(slots, "numWeekDaySlots");
+    if (maxSlots <= 0) throw new Error("设备声明不支持 Week Day schedule slot。");
+    if (slotId < 1 || slotId > maxSlots) throw new Error(`Week Day slotId=${slotId} 超出支持范围 1..${maxSlots}。`);
+    const schedule = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getWeekDaySchedule", args: [{ userId, slotId }] });
+    assertWeekDaySchedule(schedule, "Week Day schedule");
+    await context.log("info", "result", "最终测试结果：通过 Week Day schedule 读取检查", { userId, slotId, maxSlots, schedule });
+    return { userId, slotId, slots, schedule };
+  },
+};
+
+export const scheduleEntryLockYearDayReadDefinition: ExecutableTestDefinition = {
+  traceCommandClasses: ["Schedule Entry Lock"],
+  meta: {
+    id: "schedule-entry-lock-yearday-read-v1",
+    key: "schedule-entry-lock-yearday-read",
+    name: "Schedule Entry Lock Year Day 读取",
+    deviceType: "door-lock",
+    version: 1,
+    enabled: true,
+    description: "读取指定用户 Year Day schedule slot，验证年月日时分字段范围；空 slot 允许返回空值。",
+    inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
+  },
+  supports: supportsCommandClass("Schedule Entry Lock"),
+  async run(context) {
+    const userId = Number(context.inputs.userId ?? 1);
+    const slotId = Number(context.inputs.slotId ?? 1);
+    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" }) as AnyRecord | undefined;
+    const maxSlots = getScheduleSlotCount(slots, "numYearDaySlots");
+    if (maxSlots <= 0) throw new Error("设备声明不支持 Year Day schedule slot。");
+    if (slotId < 1 || slotId > maxSlots) throw new Error(`Year Day slotId=${slotId} 超出支持范围 1..${maxSlots}。`);
+    const schedule = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getYearDaySchedule", args: [{ userId, slotId }] });
+    assertYearDaySchedule(schedule, "Year Day schedule");
+    await context.log("info", "result", "最终测试结果：通过 Year Day schedule 读取检查", { userId, slotId, maxSlots, schedule });
+    return { userId, slotId, slots, schedule };
+  },
+};
+
+export const scheduleEntryLockDailyRepeatingReadDefinition: ExecutableTestDefinition = {
+  traceCommandClasses: ["Schedule Entry Lock"],
+  meta: {
+    id: "schedule-entry-lock-daily-repeating-read-v1",
+    key: "schedule-entry-lock-daily-repeating-read",
+    name: "Schedule Entry Lock Daily Repeating 读取",
+    deviceType: "door-lock",
+    version: 1,
+    enabled: true,
+    description: "v3+ 读取指定用户 Daily Repeating schedule slot，验证 weekday bitmask、开始时间和持续时间。",
+    inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
+  },
+  supports(node) {
+    if (!node.commandClasses.includes("Schedule Entry Lock")) return { supported: false, reason: "节点未发现 Schedule Entry Lock CC。" };
+    const version = nodeCcVersion(node, "Schedule Entry Lock");
+    if (version != undefined && version < 3) return { supported: false, reason: `Schedule Entry Lock v${version} 不支持 Daily Repeating。` };
+    return { supported: true };
+  },
+  async run(context) {
+    const userId = Number(context.inputs.userId ?? 1);
+    const slotId = Number(context.inputs.slotId ?? 1);
+    const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" }) as AnyRecord | undefined;
+    const maxSlots = getScheduleSlotCount(slots, "numDailyRepeatingSlots");
+    if (maxSlots <= 0) throw new Error("设备声明不支持 Daily Repeating schedule slot。");
+    if (slotId < 1 || slotId > maxSlots) throw new Error(`Daily Repeating slotId=${slotId} 超出支持范围 1..${maxSlots}。`);
+    const schedule = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getDailyRepeatingSchedule", args: [{ userId, slotId }] });
+    assertDailyRepeatingSchedule(schedule, "Daily Repeating schedule");
+    await context.log("info", "result", "最终测试结果：通过 Daily Repeating schedule 读取检查", { userId, slotId, maxSlots, schedule });
+    return { userId, slotId, slots, schedule };
   },
 };
 
