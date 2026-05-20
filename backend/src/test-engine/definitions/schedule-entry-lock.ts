@@ -1,3 +1,5 @@
+import { UserIDStatus } from "zwave-js";
+
 import type { AnyRecord, BasicReportSnapshot, ExecutableTestDefinition, ScheduleKind } from "./cc-compliance-shared.js";
 import {
   BASIC_SET_WAIT_MS,
@@ -88,6 +90,93 @@ import {
   waitForDoorLockUnlocked,
   writeScheduleByKind,
 } from "./cc-compliance-shared.js";
+
+interface ScheduleUserCodeReport {
+  userId?: number;
+  userIdStatus?: number;
+  userCode?: string | Uint8Array;
+}
+
+function supportsScheduleEntryLockUserCode(node: { commandClasses: string[] }): { supported: boolean; reason?: string } {
+  if (!node.commandClasses.includes("Schedule Entry Lock")) return { supported: false, reason: "节点未发现 Schedule Entry Lock CC。" };
+  if (!node.commandClasses.includes("User Code")) return { supported: false, reason: "Schedule Entry Lock 写入用例需要先通过 User Code CC 建立有效用户。" };
+  return { supported: true };
+}
+
+function supportsScheduleEntryLockUserCodeDoorLock(node: { commandClasses: string[] }): { supported: boolean; reason?: string } {
+  const doorLockSupport = supportsScheduleEntryLockDoorLock(node);
+  if (!doorLockSupport.supported) return doorLockSupport;
+  if (!node.commandClasses.includes("User Code")) return { supported: false, reason: "Schedule Entry Lock 实际生效验证需要 User Code CC 准备可输入 PIN。" };
+  return { supported: true };
+}
+
+function normalizeScheduleUserCode(value: string | Uint8Array | undefined): string | undefined {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("ascii");
+  return undefined;
+}
+
+function formatScheduleUserCode(userId: number): string {
+  return String(userId).padStart(Math.max(4, String(userId).length), "0");
+}
+
+async function getScheduleUserCodeReport(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  userId: number,
+): Promise<ScheduleUserCodeReport | undefined> {
+  return await context.invokeCcApi({
+    commandClass: "User Code",
+    method: "get",
+    args: [userId],
+  }) as ScheduleUserCodeReport | undefined;
+}
+
+async function ensureScheduleUserCode(
+  context: Parameters<ExecutableTestDefinition["run"]>[0],
+  userId: number,
+  reason: string,
+): Promise<{ userId: number; code: string; before?: ScheduleUserCodeReport; after?: ScheduleUserCodeReport; overwritten: boolean }> {
+  const userCount = Number(await context.invokeCcApi({ commandClass: "User Code", method: "getUsersCount" }));
+  if (!Number.isInteger(userCount) || userCount <= 0) {
+    throw new Error(`User Code CC 返回的用户数量无效：${String(userCount)}。`);
+  }
+  if (userId > userCount) {
+    throw new Error(`userId=${userId} 超过 User Code 支持范围 1..${userCount}，无法为 Schedule Entry Lock 准备有效用户。`);
+  }
+
+  const code = formatScheduleUserCode(userId);
+  const before = await getScheduleUserCodeReport(context, userId);
+  const beforeCode = normalizeScheduleUserCode(before?.userCode);
+  const alreadyReady = before?.userIdStatus === UserIDStatus.Enabled && beforeCode === code;
+  if (!alreadyReady) {
+    await context.log("info", "schedule.user-code.prepare", `为 ${reason} 准备 User ID=${userId} 的有效 User Code。`, {
+      userId,
+      code,
+      beforeStatus: before?.userIdStatus,
+      beforeCode,
+    });
+    const setResult = await context.invokeCcApi({
+      commandClass: "User Code",
+      method: "set",
+      args: [userId, UserIDStatus.Enabled, code],
+    });
+    assertSupervisionAccepted(setResult, `User Code Set userId=${userId}`);
+    await context.wait(WAIT_SHORT_MS);
+  }
+
+  const after = await getScheduleUserCodeReport(context, userId);
+  const afterCode = normalizeScheduleUserCode(after?.userCode);
+  if (after?.userIdStatus !== UserIDStatus.Enabled) {
+    throw new Error(`Schedule Entry Lock 写入前无法建立有效 User Code：userId=${userId} 状态=${String(after?.userIdStatus)}。`);
+  }
+  if (afterCode != undefined && afterCode !== code) {
+    throw new Error(`Schedule Entry Lock 写入前 User Code 回读不匹配：userId=${userId} 期望 ${code}，实际 ${afterCode}。`);
+  }
+
+  const prepared = { userId, code, before, after, overwritten: !alreadyReady };
+  await context.log("info", "schedule.user-code.ready", `User ID=${userId} 已可用于 Schedule Entry Lock 写入。`, prepared);
+  return prepared;
+}
 
 export const scheduleEntryLockDefinition: ExecutableTestDefinition = {
   traceCommandClasses: ["Schedule Entry Lock", "Time Parameters"],
@@ -459,7 +548,7 @@ export const scheduleEntryLockDailyRepeatingReadDefinition: ExecutableTestDefini
   },
 };
 export const scheduleEntryLockWeekDayLifecycleDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-weekday-lifecycle-v1",
     key: "schedule-entry-lock-weekday-lifecycle",
@@ -467,12 +556,13 @@ export const scheduleEntryLockWeekDayLifecycleDefinition: ExecutableTestDefiniti
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "覆盖写入 Week Day schedule、回读校验、删除 slot、删除后空 slot 校验。",
+    description: "先准备指定 userId 的有效 User Code，再覆盖写入 Week Day schedule、回读校验、删除 slot、删除后空 slot 校验。",
     inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
   },
-  supports: supportsCommandClass("Schedule Entry Lock"),
+  supports: supportsScheduleEntryLockUserCode,
   async run(context) {
     const slot = scheduleSlotInput(context);
+    const preparedUser = await ensureScheduleUserCode(context, slot.userId, "Week Day schedule 生命周期");
     const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
     const maxSlots = requireScheduleSlots(slots, "numWeekDaySlots", "Week Day", slot.slotId);
     const schedule = makeWeekDaySchedule();
@@ -483,12 +573,12 @@ export const scheduleEntryLockWeekDayLifecycleDefinition: ExecutableTestDefiniti
     await setWeekDaySchedule(context, slot);
     const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getWeekDaySchedule", args: [slot] });
     assertScheduleErased(afterErase, "Week Day schedule");
-    await context.log("info", "result", "最终测试结果：通过 Week Day schedule 生命周期检查", { slot, maxSlots, schedule, afterSet, afterErase });
-    return { slot, slots, maxSlots, schedule, afterSet, afterErase };
+    await context.log("info", "result", "最终测试结果：通过 Week Day schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
+    return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
   },
 };
 export const scheduleEntryLockYearDayLifecycleDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-yearday-lifecycle-v1",
     key: "schedule-entry-lock-yearday-lifecycle",
@@ -496,12 +586,13 @@ export const scheduleEntryLockYearDayLifecycleDefinition: ExecutableTestDefiniti
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "覆盖写入 Year Day schedule、起止时间合法性、回读校验、删除后空 slot 校验。",
+    description: "先准备指定 userId 的有效 User Code，再覆盖写入 Year Day schedule、起止时间合法性、回读校验、删除后空 slot 校验。",
     inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
   },
-  supports: supportsCommandClass("Schedule Entry Lock"),
+  supports: supportsScheduleEntryLockUserCode,
   async run(context) {
     const slot = scheduleSlotInput(context);
+    const preparedUser = await ensureScheduleUserCode(context, slot.userId, "Year Day schedule 生命周期");
     const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
     const maxSlots = requireScheduleSlots(slots, "numYearDaySlots", "Year Day", slot.slotId);
     const schedule = makeYearDaySchedule();
@@ -513,12 +604,12 @@ export const scheduleEntryLockYearDayLifecycleDefinition: ExecutableTestDefiniti
     await setYearDaySchedule(context, slot);
     const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getYearDaySchedule", args: [slot] });
     assertScheduleErased(afterErase, "Year Day schedule");
-    await context.log("info", "result", "最终测试结果：通过 Year Day schedule 生命周期检查", { slot, maxSlots, schedule, afterSet, afterErase });
-    return { slot, slots, maxSlots, schedule, afterSet, afterErase };
+    await context.log("info", "result", "最终测试结果：通过 Year Day schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
+    return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
   },
 };
 export const scheduleEntryLockDailyRepeatingLifecycleDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-daily-repeating-lifecycle-v1",
     key: "schedule-entry-lock-daily-repeating-lifecycle",
@@ -526,17 +617,19 @@ export const scheduleEntryLockDailyRepeatingLifecycleDefinition: ExecutableTestD
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "v3+ 覆盖写入 Daily Repeating schedule、weekday bitmask/持续时间回读、删除后空 slot 校验。",
+    description: "v3+ 先准备指定 userId 的有效 User Code，再覆盖写入 Daily Repeating schedule、weekday bitmask/持续时间回读、删除后空 slot 校验。",
     inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
   },
   supports(node) {
-    if (!node.commandClasses.includes("Schedule Entry Lock")) return { supported: false, reason: "节点未发现 Schedule Entry Lock CC。" };
+    const userCodeSupport = supportsScheduleEntryLockUserCode(node);
+    if (!userCodeSupport.supported) return userCodeSupport;
     const version = nodeCcVersion(node, "Schedule Entry Lock");
     if (version != undefined && version < 3) return { supported: false, reason: `Schedule Entry Lock v${version} 不支持 Daily Repeating。` };
     return { supported: true };
   },
   async run(context) {
     const slot = scheduleSlotInput(context);
+    const preparedUser = await ensureScheduleUserCode(context, slot.userId, "Daily Repeating schedule 生命周期");
     const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
     const maxSlots = requireScheduleSlots(slots, "numDailyRepeatingSlots", "Daily Repeating", slot.slotId);
     const schedule = makeDailyRepeatingSchedule();
@@ -547,8 +640,8 @@ export const scheduleEntryLockDailyRepeatingLifecycleDefinition: ExecutableTestD
     await setDailyRepeatingSchedule(context, slot);
     const afterErase = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getDailyRepeatingSchedule", args: [slot] });
     assertScheduleErased(afterErase, "Daily Repeating schedule");
-    await context.log("info", "result", "最终测试结果：通过 Daily Repeating schedule 生命周期检查", { slot, maxSlots, schedule, afterSet, afterErase });
-    return { slot, slots, maxSlots, schedule, afterSet, afterErase };
+    await context.log("info", "result", "最终测试结果：通过 Daily Repeating schedule 生命周期检查", { slot, preparedUser, maxSlots, schedule, afterSet, afterErase });
+    return { slot, preparedUser, slots, maxSlots, schedule, afterSet, afterErase };
   },
 };
 export const scheduleEntryLockSlotBoundaryDefinition: ExecutableTestDefinition = {
@@ -608,7 +701,7 @@ export const scheduleEntryLockSlotBoundaryDefinition: ExecutableTestDefinition =
   },
 };
 export const scheduleEntryLockEmptySlotReportDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-empty-slot-report-v1",
     key: "schedule-entry-lock-empty-slot-report",
@@ -616,12 +709,13 @@ export const scheduleEntryLockEmptySlotReportDefinition: ExecutableTestDefinitio
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "删除各类 schedule slot 后读取，验证 empty/erased slot 不应返回有效计划表字段。",
+    description: "先准备指定 userId 的有效 User Code，再删除各类 schedule slot 后读取，验证 empty/erased slot 不应返回有效计划表字段。",
     inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
   },
-  supports: supportsCommandClass("Schedule Entry Lock"),
+  supports: supportsScheduleEntryLockUserCode,
   async run(context) {
     const slot = scheduleSlotInput(context);
+    const preparedUser = await ensureScheduleUserCode(context, slot.userId, "空 slot 上报检查");
     const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
     const results = [];
     const kinds: Array<{ kind: ScheduleKind; countKey: string; label: string }> = [
@@ -640,12 +734,12 @@ export const scheduleEntryLockEmptySlotReportDefinition: ExecutableTestDefinitio
       assertScheduleErased(afterErase, `${item.label} schedule`);
       results.push({ ...item, count, afterErase });
     }
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 空 slot 上报检查", { slot, slots, results });
-    return { slot, slots, results };
+    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 空 slot 上报检查", { slot, preparedUser, slots, results });
+    return { slot, preparedUser, slots, results };
   },
 };
 export const scheduleEntryLockEnableDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-enable-v1",
     key: "schedule-entry-lock-enable",
@@ -653,21 +747,22 @@ export const scheduleEntryLockEnableDefinition: ExecutableTestDefinition = {
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "对指定 userId 依次发送 disable/enable，验证设备接受 Enable Set 命令。",
+    description: "先准备指定 userId 的有效 User Code，再对该 userId 依次发送 disable/enable，验证设备接受 Enable Set 命令。",
     inputSchema: { userId: { type: "number", default: 1 } },
   },
-  supports: supportsCommandClass("Schedule Entry Lock"),
+  supports: supportsScheduleEntryLockUserCode,
   async run(context) {
     const userId = Number(context.inputs.userId ?? 1);
     assertIntegerRange(userId, "userId", 1, 255);
+    const preparedUser = await ensureScheduleUserCode(context, userId, "Enable Set 检查");
     const disableResult = await setScheduleEntryLockEnabled(context, false, userId);
     const enableResult = await setScheduleEntryLockEnabled(context, true, userId);
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable Set 检查", { userId, disableResult, enableResult });
-    return { userId, disableResult, enableResult };
+    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable Set 检查", { userId, preparedUser, disableResult, enableResult });
+    return { userId, preparedUser, disableResult, enableResult };
   },
 };
 export const scheduleEntryLockEnableAllDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-enable-all-v1",
     key: "schedule-entry-lock-enable-all",
@@ -675,19 +770,22 @@ export const scheduleEntryLockEnableAllDefinition: ExecutableTestDefinition = {
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "依次发送全局 disable/enable，验证设备接受 Enable All Set 命令。",
-    inputSchema: {},
+    description: "先准备一个有效 User Code，再依次发送全局 disable/enable，验证设备接受 Enable All Set 命令。",
+    inputSchema: { userId: { type: "number", default: 1 } },
   },
-  supports: supportsCommandClass("Schedule Entry Lock"),
+  supports: supportsScheduleEntryLockUserCode,
   async run(context) {
+    const userId = Number(context.inputs.userId ?? 1);
+    assertIntegerRange(userId, "userId", 1, 255);
+    const preparedUser = await ensureScheduleUserCode(context, userId, "Enable All Set 检查");
     const disableAllResult = await setScheduleEntryLockEnabled(context, false);
     const enableAllResult = await setScheduleEntryLockEnabled(context, true);
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable All Set 检查", { disableAllResult, enableAllResult });
-    return { disableAllResult, enableAllResult };
+    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock Enable All Set 检查", { preparedUser, disableAllResult, enableAllResult });
+    return { preparedUser, disableAllResult, enableAllResult };
   },
 };
 export const scheduleEntryLockTypeSwitchDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-type-switch-v1",
     key: "schedule-entry-lock-type-switch",
@@ -695,12 +793,13 @@ export const scheduleEntryLockTypeSwitchDefinition: ExecutableTestDefinition = {
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "同一 userId 依次写入 Week Day / Year Day / Daily Repeating，验证设备可切换并回读各类 schedule。",
+    description: "先准备指定 userId 的有效 User Code，再同一 userId 依次写入 Week Day / Year Day / Daily Repeating，验证设备可切换并回读各类 schedule。",
     inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 } },
   },
-  supports: supportsCommandClass("Schedule Entry Lock"),
+  supports: supportsScheduleEntryLockUserCode,
   async run(context) {
     const slot = scheduleSlotInput(context);
+    const preparedUser = await ensureScheduleUserCode(context, slot.userId, "schedule 类型切换检查");
     const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
     const steps = [];
     const candidates: Array<{ kind: ScheduleKind; countKey: string; label: string; schedule: AnyRecord; fields: string[] }> = [
@@ -720,12 +819,12 @@ export const scheduleEntryLockTypeSwitchDefinition: ExecutableTestDefinition = {
       assertScheduleFieldsMatch(afterSet, candidate.schedule, candidate.fields, `${candidate.label} schedule`);
       steps.push({ kind: candidate.kind, label: candidate.label, count, writeResult, afterSet });
     }
-    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 类型切换检查", { slot, slots, steps });
-    return { slot, slots, steps };
+    await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 类型切换检查", { slot, preparedUser, slots, steps });
+    return { slot, preparedUser, slots, steps };
   },
 };
 export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
-  traceCommandClasses: ["Schedule Entry Lock", "Door Lock"],
+  traceCommandClasses: ["Schedule Entry Lock", "Door Lock", "User Code"],
   meta: {
     id: "schedule-entry-lock-manual-auth-v1",
     key: "schedule-entry-lock-manual-auth",
@@ -733,13 +832,14 @@ export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "写入当前有效计划后提示本地输入 PIN 应可解锁，再写入非当前时间计划后提示输入 PIN 应不可解锁。",
+    description: "先准备指定 userId 的有效 User Code，写入当前有效计划后提示本地输入 PIN 应可解锁，再写入非当前时间计划后提示输入 PIN 应不可解锁。",
     inputSchema: { userId: { type: "number", default: 1 }, slotId: { type: "number", default: 1 }, waitMs: { type: "number", default: SCHEDULE_AUTH_WAIT_MS } },
   },
-  supports: supportsScheduleEntryLockDoorLock,
+  supports: supportsScheduleEntryLockUserCodeDoorLock,
   async run(context) {
     const slot = scheduleSlotInput(context);
     const waitMs = Math.max(5000, Number(context.inputs.waitMs ?? SCHEDULE_AUTH_WAIT_MS));
+    const preparedUser = await ensureScheduleUserCode(context, slot.userId, "实际生效半自动验证");
     const slots = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "getNumSlots" });
     const dailyCount = getScheduleSlotCount(slots, "numDailyRepeatingSlots");
     const weekDayCount = getScheduleSlotCount(slots, "numWeekDaySlots");
@@ -758,10 +858,10 @@ export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
       await writeScheduleByKind(context, activeKind, slot, activeSchedule);
       await setScheduleEntryLockEnabled(context, true, slot.userId);
       await restoreDoorLockMode(context, DOOR_LOCK_MODE_SECURED, DOOR_LOCK_MODE_SECURED);
-      await context.log("info", "manual.wait", `请在门锁上使用 User ID=${slot.userId} 的 PIN/凭证开锁，当前计划应允许通行。`, {
+      await context.log("info", "manual.wait", `请在门锁上输入 User ID=${slot.userId} 的 PIN=${preparedUser.code}，当前计划应允许通行。`, {
         promptKey: "schedule.active.auth",
         promptTitle: "Schedule 有效时间内认证",
-        promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内使用 User ID=${slot.userId} 的 PIN/凭证本地开锁，期望门锁解锁。`,
+        promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内输入 User ID=${slot.userId} 的 PIN=${preparedUser.code} 本地开锁，期望门锁解锁。`,
         promptMeta: `activeKind=${activeKind}，slotId=${slot.slotId}`,
         timeoutMs: waitMs,
       });
@@ -771,10 +871,10 @@ export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
       await restoreDoorLockMode(context, DOOR_LOCK_MODE_SECURED, DOOR_LOCK_MODE_SECURED);
       await writeScheduleByKind(context, inactiveKind, slot, inactiveSchedule);
       await setScheduleEntryLockEnabled(context, true, slot.userId);
-      await context.log("info", "manual.wait", `请再次在门锁上使用 User ID=${slot.userId} 的 PIN/凭证开锁，当前计划应拒绝通行。`, {
+      await context.log("info", "manual.wait", `请再次在门锁上输入 User ID=${slot.userId} 的 PIN=${preparedUser.code}，当前计划应拒绝通行。`, {
         promptKey: "schedule.inactive.auth",
         promptTitle: "Schedule 非有效时间认证",
-        promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内使用 User ID=${slot.userId} 的 PIN/凭证本地开锁，期望门锁保持上锁。`,
+        promptMessage: `请在 ${Math.round(waitMs / 1000)} 秒内输入 User ID=${slot.userId} 的 PIN=${preparedUser.code} 本地开锁，期望门锁保持上锁。`,
         promptMeta: `inactiveKind=${inactiveKind}，slotId=${slot.slotId}`,
         timeoutMs: waitMs,
       });
@@ -782,6 +882,7 @@ export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
       await context.log("info", "manual.done", "Schedule 非有效时间认证完成，门锁保持上锁。", { inactiveAuthStatus });
       await context.log("info", "result", "最终测试结果：通过 Schedule Entry Lock 实际生效半自动检查", {
         slot,
+        preparedUser,
         activeKind,
         activeSchedule,
         activeAuthStatus,
@@ -789,7 +890,7 @@ export const scheduleEntryLockManualAuthDefinition: ExecutableTestDefinition = {
         inactiveSchedule,
         inactiveAuthStatus,
       });
-      return { slot, slots, activeKind, activeSchedule, activeAuthStatus, inactiveKind, inactiveSchedule, inactiveAuthStatus };
+      return { slot, preparedUser, slots, activeKind, activeSchedule, activeAuthStatus, inactiveKind, inactiveSchedule, inactiveAuthStatus };
     } finally {
       await restoreDoorLockMode(context, originalMode, DOOR_LOCK_MODE_SECURED);
     }
