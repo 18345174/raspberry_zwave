@@ -6,9 +6,16 @@ import { lockBasicDefinition } from "./definitions/lock-basic.js";
 import { nodeHealthDefinition } from "./definitions/node-health.js";
 import { userCodeAddDefinition, userCodeDeleteDefinition, userCodeEditDefinition } from "./definitions/user-code.js";
 import {
+  userCredentialAdminPinDefinition,
+  userCredentialAssociationDefinition,
   userCredentialCapabilitiesDefinition,
+  userCredentialChecksumDefinition,
   userCredentialFingerprintLifecycleDefinition,
+  userCredentialIterationDefinition,
+  userCredentialNegativeDefinition,
+  userCredentialPasswordLifecycleDefinition,
   userCredentialPinLifecycleDefinition,
+  userCredentialUserTypeDefinition,
 } from "./definitions/user-credential.js";
 
 export const executableDefinitions: ExecutableTestDefinition[] = [
@@ -19,7 +26,14 @@ export const executableDefinitions: ExecutableTestDefinition[] = [
   userCodeDeleteDefinition,
   userCredentialCapabilitiesDefinition,
   userCredentialPinLifecycleDefinition,
+  userCredentialPasswordLifecycleDefinition,
   userCredentialFingerprintLifecycleDefinition,
+  userCredentialChecksumDefinition,
+  userCredentialAdminPinDefinition,
+  userCredentialNegativeDefinition,
+  userCredentialIterationDefinition,
+  userCredentialUserTypeDefinition,
+  userCredentialAssociationDefinition,
   configurationReadWriteDefinition,
   binarySwitchDefinition,
   nodeHealthDefinition,
