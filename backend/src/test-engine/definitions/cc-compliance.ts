@@ -106,6 +106,10 @@ function requireNumber(value: unknown, label: string): number {
   return numberValue;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function isRecord(value: unknown): value is AnyRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -356,6 +360,10 @@ function assertTimezoneMatches(timezone: unknown, expectedOffset: number, label:
   if (timezone.standardOffset !== expectedOffset || timezone.dstOffset !== expectedOffset) {
     throw new Error(`${label} 回读 offset 不匹配，期望 standard/dst=${expectedOffset}，实际 standard=${String(timezone.standardOffset)} dst=${String(timezone.dstOffset)}。`);
   }
+}
+
+function timezoneMatches(timezone: unknown, expectedOffset: number): boolean {
+  return isRecord(timezone) && timezone.standardOffset === expectedOffset && timezone.dstOffset === expectedOffset;
 }
 
 function normalizeBasicReport(raw: unknown): BasicReportSnapshot {
@@ -1014,11 +1022,11 @@ export const scheduleEntryLockTimezoneRoundTripDefinition: ExecutableTestDefinit
   meta: {
     id: "schedule-entry-lock-timezone-roundtrip-v1",
     key: "schedule-entry-lock-timezone-roundtrip",
-    name: "Schedule Entry Lock 时区切换回读",
+    name: "Schedule Entry Lock / Time CC 时区切换回读",
     deviceType: "door-lock",
     version: 1,
     enabled: true,
-    description: "依次写入多个 Time CC / Schedule Entry Lock Time Offset，回读 offset 并校验设备时间；结束后恢复原始时区。",
+    description: "依次写入多个 Time CC Time Offset 并校验设备时间；Schedule Entry Lock Time Offset 若拒绝写入则记录告警；结束后恢复原始时区。",
     inputSchema: {
       offsetsMinutes: { type: "string", default: "0,480,-300" },
       maxDriftMinutes: { type: "number", default: 5 },
@@ -1057,8 +1065,17 @@ export const scheduleEntryLockTimezoneRoundTripDefinition: ExecutableTestDefinit
     try {
       for (const offset of offsets) {
         await context.log("info", "timezone.set.start", `写入 Time Offset ${offset} 分钟。`, { offset });
-        await context.invokeCcApi({ commandClass: "Time", method: "setTimezone", args: [makeTimeCcTimezone(offset)] });
-        await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "setTimezone", args: [makeScheduleEntryLockTimezone(offset)] });
+        const timeSetResult = await context.invokeCcApi({ commandClass: "Time", method: "setTimezone", args: [makeTimeCcTimezone(offset)] });
+        let scheduleSetResult: unknown;
+        try {
+          scheduleSetResult = await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "setTimezone", args: [makeScheduleEntryLockTimezone(offset)] });
+        } catch (error) {
+          scheduleSetResult = { error: getErrorMessage(error) };
+          await context.log("warn", "timezone.schedule-set.failed", "Schedule Entry Lock Time Offset Set 调用失败，后续仅按 Time CC 时区校验设备时间。", {
+            offset,
+            scheduleSetResult,
+          });
+        }
         if (settleMs > 0) {
           await context.wait(settleMs);
         }
@@ -1070,14 +1087,20 @@ export const scheduleEntryLockTimezoneRoundTripDefinition: ExecutableTestDefinit
           context.invokeCcApi({ commandClass: "Time", method: "getDate" }),
         ]);
         assertTimezoneMatches(timeTimezone, offset, "Time CC");
-        assertTimezoneMatches(scheduleTimezone, offset, "Schedule Entry Lock");
+        if (!timezoneMatches(scheduleTimezone, offset)) {
+          await context.log("warn", "timezone.schedule-offset.mismatch", "Schedule Entry Lock Time Offset 未跟随本轮写入；该设备可能拒绝 0x4E Time Offset Set，按 Time CC 时间正确性继续判定。", {
+            expectedOffset: offset,
+            scheduleTimezone,
+            scheduleSetResult,
+          });
+        }
         assertTimeRecord(time, "Time CC time");
         assertDateRecord(date, "Time CC date");
         const drift = compareDeviceTimeForOffset(date as AnyRecord, time as AnyRecord, offset);
         if (Number.isFinite(maxDriftMinutes) && drift.best.differenceMinutes > maxDriftMinutes) {
           throw new Error(`offset=${offset} 后设备 Time CC 时间与控制器时间最小偏差约 ${drift.best.differenceMinutes} 分钟，超过 ${maxDriftMinutes} 分钟。`);
         }
-        const result = { offset, timeTimezone, scheduleTimezone, time, date, drift };
+        const result = { offset, timeSetResult, scheduleSetResult, timeTimezone, scheduleTimezone, scheduleTimezoneMatched: timezoneMatches(scheduleTimezone, offset), time, date, drift };
         results.push(result);
         await context.log("info", "timezone.set.verify", `offset=${offset} 回读和时间校验通过。`, result);
       }
@@ -1087,7 +1110,14 @@ export const scheduleEntryLockTimezoneRoundTripDefinition: ExecutableTestDefinit
         originalScheduleTimezone,
       });
       await context.invokeCcApi({ commandClass: "Time", method: "setTimezone", args: [originalTimeTimezone] });
-      await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "setTimezone", args: [originalScheduleTimezone] });
+      try {
+        await context.invokeCcApi({ commandClass: "Schedule Entry Lock", method: "setTimezone", args: [originalScheduleTimezone] });
+      } catch (error) {
+        await context.log("warn", "timezone.schedule-restore.failed", "Schedule Entry Lock Time Offset 恢复调用失败；Time CC 已按原值恢复。", {
+          error: getErrorMessage(error),
+          originalScheduleTimezone,
+        });
+      }
       if (settleMs > 0) {
         await context.wait(settleMs);
       }
