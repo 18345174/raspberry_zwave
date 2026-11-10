@@ -2,7 +2,7 @@ import { DoorLockMode } from "zwave-js";
 
 import type { TestExecutionContext } from "../types.js";
 
-const DOOR_LOCK_POST_COMMAND_WAIT_MS = 5000;
+const DOOR_LOCK_POST_COMMAND_WAIT_MS = 10000;
 
 export interface DoorLockStatusSnapshot {
   currentMode?: number;

@@ -28,7 +28,7 @@ function createDoorLockCommandDefinition(input: {
       deviceType: "door-lock",
       version: 3,
       enabled: true,
-      description: `${input.description} 命令发送后会等待 5 秒再主动查询当前状态，不依赖设备主动上报。`,
+      description: `${input.description} 命令发送后会等待 10 秒再主动查询当前状态，不依赖设备主动上报。`,
       inputSchema: {},
     },
     supports(node) {
