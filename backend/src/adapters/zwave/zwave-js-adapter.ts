@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { performance } from "node:perf_hooks";
+import { InclusionState, SecurityBootstrapFailure } from "zwave-js";
 import {
   CommandClasses,
   SecurityClass,
@@ -37,11 +39,13 @@ import type { IZwaveAdapter } from "./interfaces.js";
 
 type PendingGrantRequest = {
   type: "grant_security_classes";
+  createdAt: number;
   resolve: (value: unknown) => void;
 };
 
 type PendingDskRequest = {
   type: "validate_dsk";
+  createdAt: number;
   resolve: (value: unknown) => void;
 };
 
@@ -75,6 +79,8 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     updatedAt: nowIso(),
   };
 
+  private inclusionTrace?: { id: string; startedAt: number };
+  private readonly nodeInclusionTraces = new Map<number, { id: string; startedAt: number }>();
   private modulePromise?: Promise<ZwaveModule>;
   private driver?: any;
   private controllerEventsAttached = false;
@@ -195,6 +201,9 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   public async startInclusion(): Promise<void> {
     this.ensureDriverReady();
     const zwave = await this.loadModule();
+    if (!this.status.isInclusionActive) {
+      this.inclusionTrace = { id: createId("inclusion"), startedAt: performance.now() };
+    }
     this.log("info", "[include] Starting inclusion mode", {
       strategy: "Default",
       connectedPortPath: this.status.connectedPortPath,
@@ -322,6 +331,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.inclusionChallenge = null;
     this.log("info", "[security] Submitting granted security classes", {
       requestId,
+      responseWaitMs: Math.round(performance.now() - pending.createdAt),
       securityClasses: payload.grant,
       clientSideAuth: payload.clientSideAuth,
     });
@@ -340,7 +350,9 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     this.inclusionChallenge = null;
     this.log("info", "[dsk] Submitting DSK PIN for inclusion", {
       requestId,
+      responseWaitMs: Math.round(performance.now() - pending.createdAt),
       pinLength: pin.length,
+      verification: "submitted_not_yet_verified",
     });
     pending.resolve(pin);
   }
@@ -932,7 +944,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
           },
         });
         return new Promise((resolve) => {
-          this.pendingInclusionRequests.set(requestId, { type: "grant_security_classes", resolve });
+          this.pendingInclusionRequests.set(requestId, { type: "grant_security_classes", createdAt: performance.now(), resolve });
         });
       },
       validateDSKAndEnterPIN: async (...args: unknown[]) => {
@@ -940,7 +952,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         const requestId = createId("inc_req");
         this.log("info", "[dsk] Received DSK validation challenge", {
           requestId,
-          dsk,
+          dskRedacted: true,
         });
         this.inclusionChallenge = {
           requestId,
@@ -956,13 +968,14 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
           },
         });
         return new Promise((resolve) => {
-          this.pendingInclusionRequests.set(requestId, { type: "validate_dsk", resolve });
+          this.pendingInclusionRequests.set(requestId, { type: "validate_dsk", createdAt: performance.now(), resolve });
         });
       },
       abort: () => {
         this.log("warn", "[include] Inclusion challenge flow aborted by controller");
         this.inclusionChallenge = null;
         this.pendingInclusionRequests.clear();
+        this.inclusionTrace = undefined;
         this.publish({ type: "zwave.inclusion.challenge.aborted", payload: {} });
       },
     };
@@ -1007,6 +1020,23 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         nodeCount: driver.controller?.nodes?.size,
       });
       this.publish({ type: "zwave.controller.updated", payload: { nodesReady: true } });
+    });
+
+    driver.on("node interview started", (node: any) => {
+      this.log("info", "[node] Interview started", { nodeId: node.id });
+    });
+    driver.on("node interview stage completed", (node: any, stage: string) => {
+      this.log("info", "[node] Interview stage completed", { nodeId: node.id, stage });
+    });
+    driver.on("node interview failed", (node: any, args: any) => {
+      this.log("error", "[node] Interview failed", {
+        nodeId: node.id,
+        interviewStage: String(node.interviewStage ?? "unknown"),
+        isFinal: args?.isFinal,
+        attempt: args?.attempt,
+        maxAttempts: args?.maxAttempts,
+        // Do not dump arbitrary driver payloads, which may contain credentials.
+      });
     });
 
     driver.on("node interview completed", (node: any) => {
@@ -1120,18 +1150,31 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
 
     const controller = driver.controller;
+    controller.on?.("inclusion state changed", (state: number) => {
+      this.log("info", "[include] Controller inclusion state changed", {
+        state: InclusionState[state] ?? String(state),
+      });
+    });
+    controller.on?.("inclusion failed", () => {
+      this.log("error", "[include] Controller reported inclusion failed");
+      this.inclusionTrace = undefined;
+    });
     controller.on?.("inclusion stopped", () => {
       this.updateStatus({ isInclusionActive: false });
       this.inclusionChallenge = null;
-      this.log("info", "[include] Controller reported inclusion stopped");
+      this.log("info", "[include] Controller reported inclusion stopped", {
+        note: "Discovery stopped; this does not confirm security bootstrapping success",
+      });
       this.publish({ type: "zwave.inclusion.stopped", payload: {} });
     });
 
     controller.on?.("node found", (payload: any) => {
       const nodeId =
+        payload?.id ??
         payload?.node?.id ??
         payload?.node?.nodeId ??
         payload?.nodeId;
+      this.inclusionTrace ??= { id: createId("inclusion"), startedAt: performance.now() };
       this.log("info", "[include] Controller found candidate node", {
         nodeId,
       });
@@ -1139,6 +1182,21 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     controller.on?.("node added", (node: any, result: unknown) => {
+      if (this.inclusionTrace) this.nodeInclusionTraces.set(node.id, this.inclusionTrace);
+      const outcome = result as { lowSecurity?: boolean; lowSecurityReason?: number } | undefined;
+      this.log(outcome?.lowSecurity ? "error" : "info", "[include] Security bootstrap outcome", {
+        nodeId: node.id,
+        lowSecurity: outcome?.lowSecurity ?? false,
+        reasonCode: outcome?.lowSecurityReason,
+        reason: outcome?.lowSecurityReason != undefined
+          ? SecurityBootstrapFailure[outcome.lowSecurityReason] ?? "Unknown"
+          : undefined,
+        interviewStage: String(node.interviewStage ?? "unknown"),
+        ready: Boolean(node.ready),
+        note: outcome?.lowSecurity
+          ? "Security bootstrap failed or downgraded; node added is not secure inclusion success"
+          : "Check interview completion before considering the device ready",
+      });
       this.log("info", "[node] Node added", {
         nodeId: node.id,
         result: this.summarizeUnknown(result),
@@ -1148,6 +1206,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
       this.publish({ type: "zwave.node.added", payload: { node: this.toNodeDetail(node), result } });
       this.publishNodeUpdated(node);
       this.publishNodeReadyIfEligible(node, "node_added");
+      this.inclusionTrace = undefined;
     });
 
     controller.on?.("node removed", (node: any, reason: unknown) => {
@@ -1156,6 +1215,7 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         reason,
       });
       this.publishedReadyNodeIds.delete(node.id);
+      this.nodeInclusionTraces.delete(node.id);
       this.publish({ type: "zwave.node.removed", payload: { nodeId: node.id, reason } });
     });
 
@@ -1520,6 +1580,8 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     const current = this.driver;
     this.driver = undefined;
     this.controllerEventsAttached = false;
+    this.inclusionTrace = undefined;
+    this.nodeInclusionTraces.clear();
     this.publishedReadyNodeIds.clear();
     this.pendingInclusionRequests.clear();
     this.firmwareUpdateTasks.clear();
@@ -1529,7 +1591,15 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
   }
 
   private log(level: "info" | "warn" | "error", message: string, meta?: Record<string, unknown>): void {
-    const suffix = meta ? ` ${JSON.stringify(meta)}` : "";
+    const nodeTrace = typeof meta?.nodeId === "number" ? this.nodeInclusionTraces.get(meta.nodeId) : undefined;
+    const trace = message.startsWith("[node]") ? nodeTrace
+      : /^\[(include|security|dsk)\]/.test(message) ? nodeTrace ?? this.inclusionTrace : undefined;
+    const details = trace ? {
+      ...meta,
+      inclusionId: trace.id,
+      elapsedMs: Math.round(performance.now() - trace.startedAt),
+    } : meta;
+    const suffix = details ? ` ${JSON.stringify(details)}` : "";
     console[level](`[zwave-adapter] ${message}${suffix}`);
   }
 }

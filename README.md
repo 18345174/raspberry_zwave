@@ -89,3 +89,23 @@
 - 这些都是直接跟随 `journalctl -f` 的实时输出，不是写入单独日志文件
 - `controller` 模式只跟随后续新增日志，不会先打印历史日志
 - 如当前用户没有 journal 权限，脚本会自动尝试走 `sudo journalctl`
+
+## 入网诊断日志
+
+后端会在现有 Z-Wave debug 报文之外输出 `[zwave-adapter]` 阶段摘要：
+
+- `inclusionId` / `elapsedMs`：关联同一次入网及后续 Interview，记录累计耗时。
+- `responseWaitMs`：等待安全等级确认或 PIN 提交的时间；PIN 提交不代表验证通过。
+- `Controller inclusion state changed`：驱动报告的入网状态变化。
+- `Security bootstrap outcome`：记录 `lowSecurity`、原因码和名称，例如 `Timeout`、`S2IncorrectPIN`；出现 `Node added` 不等于安全入网成功。
+- `Interview started` / `Interview stage completed` / `Interview failed`：初始化进度、失败是否终止及重试次数。
+
+新增摘要不输出 DSK、PIN、网络密钥或任意原始错误对象；DSK 仍通过原有界面完成确认。摘要不解析底层报文，也不改变入网超时、授权或 UI 流程。分析 S0/S2 密钥交换时应同时保留原有驱动 debug 日志。
+
+systemd 部署下，查看全部新增实时日志：
+
+```bash
+sudo journalctl -u zwave-test-platform.service -n 0 -f -o cat
+```
+
+仅筛选阶段摘要可追加 `| grep --line-buffered '\[zwave-adapter\]'`。筛选后的摘要无法代替完整协议日志。
