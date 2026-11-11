@@ -6,6 +6,8 @@ export interface TestExecutionContext {
   node: NodeDetail;
   inputs: Record<string, unknown>;
   log(level: "info" | "warn" | "error", stepKey: string, message: string, payload?: Record<string, unknown>): Promise<void>;
+  /** Read the driver's current cached values without starting an interview. */
+  getNodeSnapshot(): Promise<NodeDetail>;
   refreshNode(): Promise<NodeDetail>;
   setValue(input: {
     endpoint?: number;

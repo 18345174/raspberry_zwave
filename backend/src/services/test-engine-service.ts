@@ -270,6 +270,11 @@ export class TestEngineService {
           const suffix = payload ? ` ${JSON.stringify(payload)}` : "";
           console[level](`[test-engine] [run:${runId}] [${stepKey}] ${message}${suffix}`);
         },
+        getNodeSnapshot: async () => {
+          currentNode = await this.zwaveRuntime.getNode(run.nodeId);
+          this.storage.upsertNodeSnapshot(currentNode);
+          return currentNode;
+        },
         refreshNode: async () => {
           currentNode = await this.nodeRegistry.refreshNode(run.nodeId);
           return currentNode;
