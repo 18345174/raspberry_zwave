@@ -114,6 +114,9 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     }
 
     const zwave = await this.loadModule();
+    if (this.appConfig.disableUserCodeCc) {
+      this.skipUserCodeInterview(zwave.ZWaveNode.prototype);
+    }
     this.publishedReadyNodeIds.clear();
     this.log("info", "[driver] Creating Z-Wave driver", {
       portPath,
@@ -1183,9 +1186,6 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
     });
 
     controller.on?.("node added", (node: any, result: unknown) => {
-      if (this.appConfig.disableUserCodeCc) {
-        this.skipUserCodeInterview(node);
-      }
       if (this.inclusionTrace) this.nodeInclusionTraces.set(node.id, this.inclusionTrace);
       const outcome = result as { lowSecurity?: boolean; lowSecurityReason?: number } | undefined;
       this.log(outcome?.lowSecurity ? "error" : "info", "[include] Security bootstrap outcome", {
@@ -1612,24 +1612,25 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
    * query when a device has no usable checksum. Skip only this CC in the
    * interview graph while retaining the CC for explicit, on-demand tests.
    */
-  private skipUserCodeInterview(node: any): void {
-    const prototype = Object.getPrototypeOf(node);
-    if (!prototype || typeof prototype.buildCCInterviewGraph !== "function") {
-      this.log("warn", "[node] Could not skip User Code interview: graph API unavailable", { nodeId: node.id });
+  private skipUserCodeInterview(prototype: object): void {
+    const interviewPrototype = prototype as {
+      buildCCInterviewGraph?: (skipCCs: number[]) => unknown;
+    };
+    if (!prototype || typeof interviewPrototype.buildCCInterviewGraph !== "function") {
+      this.log("warn", "[node] Could not skip User Code interview: graph API unavailable");
       return;
     }
     if (this.userCodeInterviewPatchedPrototypes.has(prototype)) return;
 
-    const original = prototype.buildCCInterviewGraph;
+    const original = interviewPrototype.buildCCInterviewGraph;
     const userCodeCc = CommandClasses["User Code"];
-    prototype.buildCCInterviewGraph = function (skipCCs: number[]) {
+    interviewPrototype.buildCCInterviewGraph = function (skipCCs: number[]) {
       return original.call(this, [...skipCCs, userCodeCc]);
     };
     this.userCodeInterviewPatchedPrototypes.add(prototype);
     this.log("info", "[node] User Code interview skipped", {
-      nodeId: node.id,
       reason: "ZWAVE_DISABLE_USER_CODE_CC=true",
-      note: "User Code CC remains available for explicit on-demand commands",
+      note: "User Code CC is excluded from automatic interview graphs; explicit commands remain available",
     });
   }
 }
