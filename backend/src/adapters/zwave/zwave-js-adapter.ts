@@ -914,6 +914,11 @@ export class ZwaveJsDirectAdapter implements IZwaveAdapter {
         logToFile: false,
         showLogo: false,
       },
+      features: {
+        disableCommandClasses: this.appConfig.disableUserCodeCc
+          ? [CommandClasses["User Code"]]
+          : [],
+      },
       securityKeys: Object.keys(securityKeys).length > 0 ? securityKeys : undefined,
       emitValueUpdateAfterSetValue: true,
     };

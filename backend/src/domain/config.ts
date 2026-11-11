@@ -18,6 +18,7 @@ export interface AppConfig {
   zwaveCacheDir: string;
   zwaveDeviceConfigDir?: string;
   zwaveReinterviewTimeoutMs: number;
+  disableUserCodeCc: boolean;
   debugApiEnabled: boolean;
   httpRequestLogsEnabled: boolean;
   apiToken?: string;
@@ -135,6 +136,7 @@ export function loadAppConfig(): AppConfig {
     zwaveCacheDir,
     zwaveDeviceConfigDir: optional("ZWAVE_DEVICE_CONFIG_DIR"),
     zwaveReinterviewTimeoutMs: numberEnv("ZWAVE_REINTERVIEW_TIMEOUT_MS", 1_800_000),
+    disableUserCodeCc: booleanEnv("ZWAVE_DISABLE_USER_CODE_CC", true),
     debugApiEnabled: booleanEnv("DEBUG_API_ENABLED", false),
     httpRequestLogsEnabled: booleanEnv("HTTP_REQUEST_LOGS_ENABLED", false),
     apiToken: optional("API_TOKEN"),
